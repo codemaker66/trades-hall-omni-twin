@@ -2,8 +2,9 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { createRoot } from "@react-three/fiber";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
+import FpsController from "./FpsController";
 
 type PlaceType = "table" | "chair" | "stage";
 
@@ -65,9 +66,7 @@ const ROTATE_FREE_DEG = 5;
 const STAGE_HEIGHT = 0.4;
 const STAGE_WIDTH = 3.2;
 const STAGE_DEPTH = 2.2;
-const WALK_SPEED = 2.6;
-const WALK_EYE_HEIGHT = 1.6;
-const WALK_MARGIN = 0.35;
+const FPS_EYE_HEIGHT = 1.6;
 
 function uid(prefix = "obj") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
@@ -81,10 +80,12 @@ export default function VenueViewer() {
   const [measureText, setMeasureText] = useState<string>("(measurement off)");
   const [snapOn, setSnapOn] = useState(false);
   const [walkMode, setWalkMode] = useState(false);
+  const [lookSensitivity, setLookSensitivity] = useState(1);
+  const [invertY, setInvertY] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>("(none)");
   const [hint, setHint] = useState<string>(
-    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Snap toggles grid. Walk Mode uses WASD."
+    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift."
   );
 
   // We keep these refs so Three state survives React re-renders.
@@ -92,11 +93,11 @@ export default function VenueViewer() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  const walkControlsRef = useRef<PointerLockControls | null>(null);
+  const fpsRootRef = useRef<ReturnType<typeof createRoot> | null>(null);
+  const fpsUpdateRef = useRef<(delta: number) => void>(() => undefined);
   const selectedIdRef = useRef<string | null>(null);
   const snapOnRef = useRef(false);
   const walkModeRef = useRef(false);
-  const movementRef = useRef({ forward: false, back: false, left: false, right: false });
 
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const mouseNdc = useMemo(() => new THREE.Vector2(), []);
@@ -129,23 +130,15 @@ export default function VenueViewer() {
 
   useEffect(() => {
     walkModeRef.current = walkMode;
-    if (!walkMode && walkControlsRef.current?.isLocked) {
-      walkControlsRef.current.unlock();
-    }
     if (controlsRef.current) {
       controlsRef.current.enabled = !walkMode && !draggingRef.current.active;
       controlsRef.current.update();
-    }
-    if (!walkMode) {
-      movementRef.current = { forward: false, back: false, left: false, right: false };
     }
     if (walkMode && cameraRef.current) {
       if (rendererRef.current && draggingRef.current.pointerId !== undefined) {
         rendererRef.current.domElement.releasePointerCapture(draggingRef.current.pointerId);
       }
       draggingRef.current = { active: false };
-      cameraRef.current.position.y = WALK_EYE_HEIGHT;
-      clampToRoom(cameraRef.current.position, WALK_MARGIN);
     }
   }, [walkMode]);
 
@@ -194,11 +187,6 @@ export default function VenueViewer() {
     if (!snapOnRef.current) return;
     pos.x = snapValue(pos.x, GRID_SNAP);
     pos.z = snapValue(pos.z, GRID_SNAP);
-  }
-
-  function clampToRoom(pos: THREE.Vector3, margin = 0) {
-    pos.x = clamp(pos.x, ROOM_BOUNDS.minX + margin, ROOM_BOUNDS.maxX - margin);
-    pos.z = clamp(pos.z, ROOM_BOUNDS.minZ + margin, ROOM_BOUNDS.maxZ - margin);
   }
 
   function toShape(meta: ObjMeta, pos: THREE.Vector3, rotDeg?: number): Shape2D {
@@ -522,7 +510,9 @@ export default function VenueViewer() {
     scene.add(mesh);
 
     select(meta);
-    setHint("Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Walk Mode uses WASD. Red = invalid placement.");
+    setHint(
+      "Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift. Red = invalid placement."
+    );
   }
 
   function buildGrid(width: number, length: number, step: number) {
@@ -657,7 +647,6 @@ export default function VenueViewer() {
     controls.target.set(0, 0, 0);
     controls.update();
 
-    const walkControls = new PointerLockControls(camera, renderer.domElement);
 
     // Lights
     const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 1.0);
@@ -724,7 +713,27 @@ export default function VenueViewer() {
     cameraRef.current = camera;
     rendererRef.current = renderer;
     controlsRef.current = controls;
-    walkControlsRef.current = walkControls;
+
+    const fpsRoot = createRoot(renderer.domElement);
+    fpsRoot.configure({
+      gl: renderer,
+      camera,
+      frameloop: "never"
+    });
+    fpsRoot.render(
+      <FpsController
+        enabled={walkMode}
+        camera={camera}
+        scene={scene}
+        domElement={renderer.domElement}
+        bounds={ROOM_BOUNDS}
+        eyeHeight={FPS_EYE_HEIGHT}
+        sensitivity={lookSensitivity}
+        invertY={invertY}
+        updateRef={fpsUpdateRef}
+      />
+    );
+    fpsRootRef.current = fpsRoot;
 
     rebuildZones();
 
@@ -740,12 +749,11 @@ export default function VenueViewer() {
       if (!sceneRef.current || !cameraRef.current || !rendererRef.current) return;
 
       if (walkModeRef.current) {
-        if (walkControlsRef.current && !walkControlsRef.current.isLocked) {
-          walkControlsRef.current.lock();
-        }
+        ev.stopPropagation();
         return;
       }
 
+      ev.stopPropagation();
       setMouseFromEvent(ev, renderer.domElement);
 
       // measurement click
@@ -811,6 +819,7 @@ export default function VenueViewer() {
       if (!meta) return;
       if (!cameraRef.current || !rendererRef.current) return;
 
+      ev.stopPropagation();
       setMouseFromEvent(ev, renderer.domElement);
 
       const floorHit = intersectFloor(cameraRef.current);
@@ -836,11 +845,12 @@ export default function VenueViewer() {
       }
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (ev: PointerEvent) => {
       if (!draggingRef.current.active) return;
       const meta = draggingRef.current.target;
       if (!meta) return;
 
+      ev.stopPropagation();
       // if current spot invalid, snap back to last good
       const pos = meta.mesh.position.clone();
       const ok = isValidPlacement(meta, pos, getRotationDeg(meta));
@@ -861,16 +871,7 @@ export default function VenueViewer() {
     const onKeyDown = (ev: KeyboardEvent) => {
       const key = ev.key.toLowerCase();
 
-      if (walkModeRef.current) {
-        if (key === "w") movementRef.current.forward = true;
-        if (key === "s") movementRef.current.back = true;
-        if (key === "a") movementRef.current.left = true;
-        if (key === "d") movementRef.current.right = true;
-        if (key === "w" || key === "a" || key === "s" || key === "d") {
-          ev.preventDefault();
-        }
-        return;
-      }
+      if (walkModeRef.current) return;
 
       if (ev.key === "Delete" || ev.key === "Backspace") {
         ev.preventDefault();
@@ -886,59 +887,20 @@ export default function VenueViewer() {
       if (key === "e") rotateSelected(-step);
     };
 
-    const onKeyUp = (ev: KeyboardEvent) => {
-      if (!walkModeRef.current) return;
-      const key = ev.key.toLowerCase();
-      if (key === "w") movementRef.current.forward = false;
-      if (key === "s") movementRef.current.back = false;
-      if (key === "a") movementRef.current.left = false;
-      if (key === "d") movementRef.current.right = false;
-    };
-
     window.addEventListener("resize", onResize);
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
 
     const clock = new THREE.Clock();
-    const walkDirection = new THREE.Vector3();
-    const walkRight = new THREE.Vector3();
-    const walkMove = new THREE.Vector3();
 
     let raf = 0;
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const delta = clock.getDelta();
 
-      if (walkModeRef.current && walkControlsRef.current?.isLocked) {
-        const movement = movementRef.current;
-        const forward = (movement.forward ? 1 : 0) + (movement.back ? -1 : 0);
-        const right = (movement.right ? 1 : 0) + (movement.left ? -1 : 0);
-
-        if (cameraRef.current && (forward !== 0 || right !== 0)) {
-          cameraRef.current.getWorldDirection(walkDirection);
-          walkDirection.y = 0;
-          walkDirection.normalize();
-          walkRight.crossVectors(walkDirection, cameraRef.current.up).normalize();
-
-          walkMove.set(0, 0, 0);
-          walkMove.addScaledVector(walkDirection, forward);
-          walkMove.addScaledVector(walkRight, right);
-
-          if (walkMove.lengthSq() > 0) {
-            walkMove.normalize();
-            cameraRef.current.position.addScaledVector(walkMove, WALK_SPEED * delta);
-          }
-        }
-
-        if (cameraRef.current) {
-          cameraRef.current.position.y = WALK_EYE_HEIGHT;
-          clampToRoom(cameraRef.current.position, WALK_MARGIN);
-        }
-      }
-
+      fpsUpdateRef.current(delta);
       controls.update();
       renderer.render(scene, camera);
     };
@@ -951,10 +913,9 @@ export default function VenueViewer() {
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
 
       controls.dispose();
-      walkControls.disconnect();
+      fpsRoot.unmount();
       renderer.dispose();
 
       if (renderer.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
@@ -963,7 +924,7 @@ export default function VenueViewer() {
       cameraRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
-      walkControlsRef.current = null;
+      fpsRootRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measureOn]);
@@ -973,6 +934,28 @@ export default function VenueViewer() {
     const g = zonesGroupRef.current;
     if (g) g.visible = zonesOn;
   }, [zonesOn]);
+
+  useEffect(() => {
+    const root = fpsRootRef.current;
+    const camera = cameraRef.current;
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    if (!root || !camera || !scene || !renderer) return;
+
+    root.render(
+      <FpsController
+        enabled={walkMode}
+        camera={camera}
+        scene={scene}
+        domElement={renderer.domElement}
+        bounds={ROOM_BOUNDS}
+        eyeHeight={FPS_EYE_HEIGHT}
+        sensitivity={lookSensitivity}
+        invertY={invertY}
+        updateRef={fpsUpdateRef}
+      />
+    );
+  }, [invertY, lookSensitivity, walkMode]);
 
   return (
     <div className="w-full h-[calc(100vh-120px)] relative rounded-xl overflow-hidden border border-white/10">
@@ -1039,19 +1022,30 @@ export default function VenueViewer() {
 
           <button
             className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() =>
-              setWalkMode((v) => {
-                const next = !v;
-                walkModeRef.current = next;
-                if (!next && walkControlsRef.current?.isLocked) {
-                  walkControlsRef.current.unlock();
-                }
-                return next;
-              })
-            }
+            onClick={() => setWalkMode((v) => !v)}
           >
             Walk Mode: {walkMode ? "ON" : "OFF"}
           </button>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label className="text-xs text-white/80 flex items-center gap-2">
+            <span className="min-w-[80px]">Sensitivity</span>
+            <input
+              type="range"
+              min={0.2}
+              max={2.5}
+              step={0.1}
+              value={lookSensitivity}
+              onChange={(event) => setLookSensitivity(Number(event.target.value))}
+              className="w-36 accent-sky-400"
+            />
+            <span className="text-white/60 tabular-nums w-10">{lookSensitivity.toFixed(1)}</span>
+          </label>
+          <label className="text-xs text-white/80 flex items-center gap-2">
+            <input type="checkbox" checked={invertY} onChange={() => setInvertY((v) => !v)} />
+            Invert Y
+          </label>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -1081,7 +1075,7 @@ export default function VenueViewer() {
         <div className="text-xs text-white/80">Selected: {selectedLabel}</div>
         <div className="text-xs text-white/80">Measure: {measureText}</div>
         <div className="text-xs text-white/70 max-w-[340px]">{hint}</div>
-        <div className="text-[11px] text-white/50">Walk Mode: Click to lock mouse - WASD move - ESC unlock</div>
+        <div className="text-[11px] text-white/50">Click to lock mouse • WASD move • Shift sprint • ESC unlock</div>
       </div>
     </div>
   );
