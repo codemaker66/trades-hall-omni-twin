@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
-import { PointerLockControls } from "@react-three/drei";
-import type { PointerLockControls as PointerLockControlsImpl } from "three-stdlib";
+import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 
 type Bounds = {
   minX: number;
@@ -12,281 +10,334 @@ type Bounds = {
   maxZ: number;
 };
 
-type FpsControllerProps = {
-  enabled: boolean;
+type FpsControllerOptions = {
   camera: THREE.PerspectiveCamera;
   domElement: HTMLElement;
   scene: THREE.Scene;
   bounds: Bounds;
   eyeHeight: number;
-  sensitivity: number;
-  invertY: boolean;
-  updateRef: MutableRefObject<(delta: number) => void>;
+  roomHeight?: number;
+  sensitivity?: number;
+  invertY?: boolean;
 };
 
-const LOOK_DAMPING = 14;
-const MOVE_ACCEL = 16;
-const MOVE_FRICTION = 14;
-const BASE_SPEED = 2.6;
-const SPRINT_MULT = 1.7;
-const WALK_MARGIN = 0.35;
-const MOUSE_SCALE = 0.002;
-const PITCH_LIMIT = Math.PI / 2 - 0.02;
+type KeyState = {
+  forward: boolean;
+  backward: boolean;
+  left: boolean;
+  right: boolean;
+  sprint: boolean;
+  up: boolean;
+  down: boolean;
+};
 
-export default function FpsController({
-  enabled,
-  camera,
-  domElement,
-  scene,
-  bounds,
-  eyeHeight,
-  sensitivity,
-  invertY,
-  updateRef
-}: FpsControllerProps) {
-  const controlsRef = useRef<PointerLockControlsImpl | null>(null);
-  const yawObjectRef = useMemo(() => new THREE.Object3D(), []);
-  const velocityRef = useRef(new THREE.Vector3());
-  const movementRef = useRef({ forward: false, back: false, left: false, right: false, sprint: false });
-  const enabledRef = useRef(enabled);
-  const sensitivityRef = useRef(sensitivity);
-  const invertYRef = useRef(invertY);
-  const lockedRef = useRef(false);
+type FpsControllerHandle = {
+  update: (delta: number) => void;
+  setEnabled: (enabled: boolean) => void;
+  setSensitivity: (value: number) => void;
+  setInvertY: (value: boolean) => void;
+  dispose: () => void;
+};
 
-  const yawRef = useRef(0);
-  const pitchRef = useRef(0);
-  const targetYawRef = useRef(0);
-  const targetPitchRef = useRef(0);
+const UP = new THREE.Vector3(0, 1, 0);
+const TEMP_FORWARD = new THREE.Vector3();
+const TEMP_RIGHT = new THREE.Vector3();
+const WISH_DIR = new THREE.Vector3();
+const DESIRED_VEL = new THREE.Vector3();
 
-  const tempForward = useMemo(() => new THREE.Vector3(), []);
-  const tempRight = useMemo(() => new THREE.Vector3(), []);
-  const tempWish = useMemo(() => new THREE.Vector3(), []);
-  const tempDesired = useMemo(() => new THREE.Vector3(), []);
-  const tempPos = useMemo(() => new THREE.Vector3(), []);
-  const tempQuat = useMemo(() => new THREE.Quaternion(), []);
-  const tempEuler = useMemo(() => new THREE.Euler(0, 0, 0, "YXZ"), []);
+const MAX_PITCH = Math.PI / 2 - 0.05;
+const ROTATION_DAMPING = 12;
+const BASE_SPEED = 4.2;
+const SPRINT_MULTIPLIER = 1.6;
+const ACCELERATION = 18;
+const FRICTION = 14;
+const VERTICAL_SPEED = 3;
+const VERTICAL_ACCEL = 12;
+const BOUND_MARGIN = 0.2;
 
-  useEffect(() => {
-    enabledRef.current = enabled;
-  }, [enabled]);
+export function createFpsController(options: FpsControllerOptions): FpsControllerHandle {
+  const { camera, domElement, scene, bounds, eyeHeight } = options;
+  const roomHeight = options.roomHeight ?? Number.POSITIVE_INFINITY;
 
-  useEffect(() => {
-    sensitivityRef.current = sensitivity;
-  }, [sensitivity]);
+  let sensitivity = options.sensitivity ?? 1;
+  let invertY = options.invertY ?? false;
+  let enabled = false;
 
-  useEffect(() => {
-    invertYRef.current = invertY;
-  }, [invertY]);
+  const controls = new PointerLockControls(camera, domElement) as PointerLockControls & {
+    connect: () => void;
+    disconnect: () => void;
+    _onMouseMove: (event: MouseEvent) => void;
+  };
 
-  useEffect(() => {
-    if (!domElement) return;
-    const handleClick = () => {
-      if (!enabledRef.current) return;
-      controlsRef.current?.lock();
-    };
-    domElement.addEventListener("click", handleClick);
-    return () => {
-      domElement.removeEventListener("click", handleClick);
-    };
-  }, [domElement]);
+  controls.disconnect();
 
-  useEffect(() => {
-    const controls = controlsRef.current;
-    if (!controls) return;
+  const yawObject = new THREE.Object3D();
+  const velocity = new THREE.Vector3();
+  const keyState: KeyState = {
+    forward: false,
+    backward: false,
+    left: false,
+    right: false,
+    sprint: false,
+    up: false,
+    down: false
+  };
 
-    controls.onMouseMove = (event: MouseEvent) => {
-      if (!enabledRef.current || !controls.isLocked) return;
+  let yaw = 0;
+  let pitch = 0;
+  let targetYaw = 0;
+  let targetPitch = 0;
 
-      const invert = invertYRef.current ? -1 : 1;
-      const lookScale = MOUSE_SCALE * sensitivityRef.current;
+  const minX = bounds.minX + BOUND_MARGIN;
+  const maxX = bounds.maxX - BOUND_MARGIN;
+  const minZ = bounds.minZ + BOUND_MARGIN;
+  const maxZ = bounds.maxZ - BOUND_MARGIN;
+  const minY = eyeHeight;
+  const maxY = Number.isFinite(roomHeight) ? roomHeight - eyeHeight : Number.POSITIVE_INFINITY;
 
-      targetYawRef.current -= event.movementX * lookScale;
-      targetPitchRef.current -= event.movementY * lookScale * invert;
-      targetPitchRef.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, targetPitchRef.current));
-    };
-  }, [enabled]);
+  const setFromCamera = () => {
+    const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+    yaw = euler.y;
+    pitch = THREE.MathUtils.clamp(euler.x, -MAX_PITCH, MAX_PITCH);
+    targetYaw = yaw;
+    targetPitch = pitch;
+  };
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!enabledRef.current) return;
-      const key = event.key.toLowerCase();
-      if (key === "w") movementRef.current.forward = true;
-      if (key === "s") movementRef.current.back = true;
-      if (key === "a") movementRef.current.left = true;
-      if (key === "d") movementRef.current.right = true;
-      if (key === "shift") movementRef.current.sprint = true;
-      if (key === "w" || key === "a" || key === "s" || key === "d" || key === "shift") {
-        event.preventDefault();
-      }
-    };
+  const clearInput = () => {
+    keyState.forward = false;
+    keyState.backward = false;
+    keyState.left = false;
+    keyState.right = false;
+    keyState.sprint = false;
+    keyState.up = false;
+    keyState.down = false;
+  };
 
-    const handleKeyUp = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (key === "w") movementRef.current.forward = false;
-      if (key === "s") movementRef.current.back = false;
-      if (key === "a") movementRef.current.left = false;
-      if (key === "d") movementRef.current.right = false;
-      if (key === "shift") movementRef.current.sprint = false;
-    };
+  const onMouseMove = (event: MouseEvent) => {
+    if (!controls.isLocked || !enabled) return;
 
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, []);
+    const movementX = event.movementX || (event as any).mozMovementX || (event as any).webkitMovementX || 0;
+    const movementY = event.movementY || (event as any).mozMovementY || (event as any).webkitMovementY || 0;
 
-  useEffect(() => {
-    const onLock = () => {
-      lockedRef.current = true;
-    };
-    const onUnlock = () => {
-      lockedRef.current = false;
-      velocityRef.current.set(0, 0, 0);
-      movementRef.current = { forward: false, back: false, left: false, right: false, sprint: false };
-    };
+    const scale = 0.002 * sensitivity;
+    const invert = invertY ? -1 : 1;
 
-    updateRef.current = (delta: number) => {
-      if (!enabledRef.current || !lockedRef.current) return;
+    targetYaw -= movementX * scale;
+    targetPitch -= movementY * scale * invert;
+    targetPitch = THREE.MathUtils.clamp(targetPitch, -MAX_PITCH, MAX_PITCH);
+  };
 
-      const smoothing = 1 - Math.exp(-LOOK_DAMPING * delta);
-      yawRef.current += (targetYawRef.current - yawRef.current) * smoothing;
-      pitchRef.current += (targetPitchRef.current - pitchRef.current) * smoothing;
+  controls._onMouseMove = onMouseMove;
+  controls.connect();
 
-      yawObjectRef.rotation.y = yawRef.current;
-      camera.rotation.x = pitchRef.current;
-      camera.rotation.y = 0;
-      camera.rotation.z = 0;
+  const onCanvasClick = () => {
+    if (!enabled) return;
+    controls.lock();
+  };
 
-      const forwardInput = (movementRef.current.forward ? 1 : 0) + (movementRef.current.back ? -1 : 0);
-      const rightInput = (movementRef.current.right ? 1 : 0) + (movementRef.current.left ? -1 : 0);
+  const shouldIgnoreKey = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return false;
+    if (target.isContentEditable) return true;
+    const tagName = target.tagName;
+    return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
+  };
 
-      tempWish.set(0, 0, 0);
-      if (forwardInput !== 0 || rightInput !== 0) {
-        tempForward.set(0, 0, -1).applyQuaternion(yawObjectRef.quaternion);
-        tempForward.y = 0;
-        tempForward.normalize();
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!enabled) return;
+    if (shouldIgnoreKey(event)) return;
 
-        tempRight.crossVectors(tempForward, camera.up).normalize();
-
-        tempWish.addScaledVector(tempForward, forwardInput);
-        tempWish.addScaledVector(tempRight, rightInput);
-        if (tempWish.lengthSq() > 0) tempWish.normalize();
-      }
-
-      const velocity = velocityRef.current;
-      const maxSpeed = BASE_SPEED * (movementRef.current.sprint ? SPRINT_MULT : 1);
-
-      if (tempWish.lengthSq() > 0) {
-        tempDesired.copy(tempWish).multiplyScalar(maxSpeed);
-        const diff = tempDesired.sub(velocity);
-        const accelStep = MOVE_ACCEL * delta;
-        if (diff.length() > accelStep) diff.setLength(accelStep);
-        velocity.add(diff);
-      } else {
-        const speed = velocity.length();
-        if (speed > 0) {
-          const drop = MOVE_FRICTION * delta;
-          const newSpeed = Math.max(0, speed - drop);
-          velocity.multiplyScalar(newSpeed / speed);
-        }
-      }
-
-      if (velocity.length() > maxSpeed) {
-        velocity.setLength(maxSpeed);
-      }
-
-      yawObjectRef.position.addScaledVector(velocity, delta);
-      yawObjectRef.position.x = clamp(yawObjectRef.position.x, bounds.minX + WALK_MARGIN, bounds.maxX - WALK_MARGIN);
-      yawObjectRef.position.z = clamp(yawObjectRef.position.z, bounds.minZ + WALK_MARGIN, bounds.maxZ - WALK_MARGIN);
-      yawObjectRef.position.y = 0;
-
-      camera.position.set(0, eyeHeight, 0);
-      camera.updateMatrixWorld();
-    };
-
-    const controls = controlsRef.current;
-    controls?.addEventListener("lock", onLock);
-    controls?.addEventListener("unlock", onUnlock);
-
-    return () => {
-      updateRef.current = () => undefined;
-      controls?.removeEventListener("lock", onLock);
-      controls?.removeEventListener("unlock", onUnlock);
-    };
-  }, [bounds.maxX, bounds.maxZ, bounds.minX, bounds.minZ, camera, eyeHeight, updateRef, yawObjectRef]);
-
-  useEffect(() => {
-    if (!enabled) {
-      if (controlsRef.current?.isLocked) {
-        controlsRef.current.unlock();
-      }
-      lockedRef.current = false;
-      velocityRef.current.set(0, 0, 0);
-      movementRef.current = { forward: false, back: false, left: false, right: false, sprint: false };
-
-      if (camera.parent === yawObjectRef) {
-        camera.getWorldPosition(tempPos);
-        camera.getWorldQuaternion(tempQuat);
-        yawObjectRef.remove(camera);
-        camera.position.copy(tempPos);
-        camera.quaternion.copy(tempQuat);
-      }
-
-      if (scene.children.includes(yawObjectRef)) {
-        scene.remove(yawObjectRef);
-      }
-      return () => undefined;
+    switch (event.code) {
+      case "KeyW":
+        keyState.forward = true;
+        break;
+      case "KeyS":
+        keyState.backward = true;
+        break;
+      case "KeyA":
+        keyState.left = true;
+        break;
+      case "KeyD":
+        keyState.right = true;
+        break;
+      case "ShiftLeft":
+      case "ShiftRight":
+        keyState.sprint = true;
+        break;
+      case "Space":
+        keyState.up = true;
+        break;
+      case "ControlLeft":
+      case "ControlRight":
+        keyState.down = true;
+        break;
+      default:
+        return;
     }
 
-    if (!scene.children.includes(yawObjectRef)) {
-      scene.add(yawObjectRef);
+    event.preventDefault();
+  };
+
+  const onKeyUp = (event: KeyboardEvent) => {
+    if (!enabled) return;
+    if (shouldIgnoreKey(event)) return;
+
+    switch (event.code) {
+      case "KeyW":
+        keyState.forward = false;
+        break;
+      case "KeyS":
+        keyState.backward = false;
+        break;
+      case "KeyA":
+        keyState.left = false;
+        break;
+      case "KeyD":
+        keyState.right = false;
+        break;
+      case "ShiftLeft":
+      case "ShiftRight":
+        keyState.sprint = false;
+        break;
+      case "Space":
+        keyState.up = false;
+        break;
+      case "ControlLeft":
+      case "ControlRight":
+        keyState.down = false;
+        break;
+      default:
+        return;
     }
 
-    camera.rotation.order = "YXZ";
-    camera.getWorldPosition(tempPos);
-    camera.getWorldQuaternion(tempQuat);
-    tempEuler.setFromQuaternion(tempQuat, "YXZ");
-    yawRef.current = tempEuler.y;
-    pitchRef.current = tempEuler.x;
-    targetYawRef.current = yawRef.current;
-    targetPitchRef.current = pitchRef.current;
+    event.preventDefault();
+  };
 
-    yawObjectRef.position.set(tempPos.x, 0, tempPos.z);
-    yawObjectRef.position.x = clamp(yawObjectRef.position.x, bounds.minX + WALK_MARGIN, bounds.maxX - WALK_MARGIN);
-    yawObjectRef.position.z = clamp(yawObjectRef.position.z, bounds.minZ + WALK_MARGIN, bounds.maxZ - WALK_MARGIN);
-    yawObjectRef.rotation.set(0, yawRef.current, 0);
-    camera.rotation.set(pitchRef.current, 0, 0);
-    camera.position.set(0, eyeHeight, 0);
+  const onUnlock = () => {
+    clearInput();
+    velocity.set(0, 0, 0);
+  };
 
-    if (camera.parent !== yawObjectRef) {
-      yawObjectRef.add(camera);
+  const attachCamera = () => {
+    setFromCamera();
+
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    camera.getWorldPosition(worldPos);
+    camera.getWorldQuaternion(worldQuat);
+
+    yawObject.position.copy(worldPos);
+    yawObject.position.y = THREE.MathUtils.clamp(yawObject.position.y, minY, Math.max(minY, maxY));
+    yawObject.rotation.y = yaw;
+
+    yawObject.add(camera);
+    camera.position.set(0, 0, 0);
+    camera.rotation.set(pitch, 0, 0);
+
+    scene.add(yawObject);
+  };
+
+  const detachCamera = () => {
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    camera.getWorldPosition(worldPos);
+    camera.getWorldQuaternion(worldQuat);
+
+    yawObject.remove(camera);
+    scene.add(camera);
+    camera.position.copy(worldPos);
+    camera.quaternion.copy(worldQuat);
+    scene.remove(yawObject);
+  };
+
+  const setEnabled = (value: boolean) => {
+    if (enabled === value) return;
+    enabled = value;
+
+    if (enabled) {
+      attachCamera();
+    } else {
+      controls.unlock();
+      clearInput();
+      velocity.set(0, 0, 0);
+      detachCamera();
     }
-    return () => {
-      if (camera.parent === yawObjectRef) {
-        camera.getWorldPosition(tempPos);
-        camera.getWorldQuaternion(tempQuat);
-        yawObjectRef.remove(camera);
-        camera.position.copy(tempPos);
-        camera.quaternion.copy(tempQuat);
-      }
-      if (scene.children.includes(yawObjectRef)) {
-        scene.remove(yawObjectRef);
-      }
-    };
-  }, [camera, eyeHeight, enabled, scene, tempEuler, tempPos, tempQuat, yawObjectRef]);
+  };
 
-  return (
-    <PointerLockControls
-      ref={controlsRef}
-      enabled={enabled}
-      domElement={domElement}
-      selector=".__fps_lock_unused__"
-    />
-  );
-}
+  const update = (delta: number) => {
+    if (!enabled) return;
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
+    const dt = Math.min(Math.max(delta, 0), 0.1);
+
+    yaw = THREE.MathUtils.damp(yaw, targetYaw, ROTATION_DAMPING, dt);
+    pitch = THREE.MathUtils.damp(pitch, targetPitch, ROTATION_DAMPING, dt);
+
+    yawObject.rotation.y = yaw;
+    camera.rotation.x = pitch;
+    camera.rotation.y = 0;
+    camera.rotation.z = 0;
+
+    const inputForward = (keyState.forward ? 1 : 0) - (keyState.backward ? 1 : 0);
+    const inputRight = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0);
+    const inputUp = (keyState.up ? 1 : 0) - (keyState.down ? 1 : 0);
+
+    const canMove = controls.isLocked;
+    const speed = BASE_SPEED * (keyState.sprint ? SPRINT_MULTIPLIER : 1);
+
+    if (canMove && (inputForward !== 0 || inputRight !== 0)) {
+      TEMP_FORWARD.set(0, 0, -1).applyAxisAngle(UP, yaw);
+      TEMP_RIGHT.set(1, 0, 0).applyAxisAngle(UP, yaw);
+      WISH_DIR.copy(TEMP_FORWARD).multiplyScalar(inputForward).addScaledVector(TEMP_RIGHT, inputRight);
+
+      if (WISH_DIR.lengthSq() > 0) {
+        WISH_DIR.normalize();
+      }
+
+      DESIRED_VEL.copy(WISH_DIR).multiplyScalar(speed);
+      velocity.x = THREE.MathUtils.damp(velocity.x, DESIRED_VEL.x, ACCELERATION, dt);
+      velocity.z = THREE.MathUtils.damp(velocity.z, DESIRED_VEL.z, ACCELERATION, dt);
+    } else {
+      velocity.x = THREE.MathUtils.damp(velocity.x, 0, FRICTION, dt);
+      velocity.z = THREE.MathUtils.damp(velocity.z, 0, FRICTION, dt);
+    }
+
+    const verticalTarget = canMove ? inputUp * VERTICAL_SPEED : 0;
+    velocity.y = THREE.MathUtils.damp(velocity.y, verticalTarget, VERTICAL_ACCEL, dt);
+
+    yawObject.position.addScaledVector(velocity, dt);
+    yawObject.position.x = THREE.MathUtils.clamp(yawObject.position.x, minX, maxX);
+    yawObject.position.z = THREE.MathUtils.clamp(yawObject.position.z, minZ, maxZ);
+    yawObject.position.y = THREE.MathUtils.clamp(yawObject.position.y, minY, Math.max(minY, maxY));
+  };
+
+  domElement.addEventListener("click", onCanvasClick);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  controls.addEventListener("unlock", onUnlock);
+
+  const setSensitivity = (value: number) => {
+    sensitivity = value;
+  };
+
+  const setInvertY = (value: boolean) => {
+    invertY = value;
+  };
+
+  const dispose = () => {
+    setEnabled(false);
+    controls.removeEventListener("unlock", onUnlock);
+    domElement.removeEventListener("click", onCanvasClick);
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("keyup", onKeyUp);
+    controls.disconnect();
+    scene.remove(yawObject);
+  };
+
+  return {
+    update,
+    setEnabled,
+    setSensitivity,
+    setInvertY,
+    dispose
+  };
 }

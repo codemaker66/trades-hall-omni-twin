@@ -2,9 +2,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { createRoot } from "@react-three/fiber";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import FpsController from "./FpsController";
+import { createFpsController } from "./FpsController";
 
 type PlaceType = "table" | "chair" | "stage";
 
@@ -85,7 +84,7 @@ export default function VenueViewer() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>("(none)");
   const [hint, setHint] = useState<string>(
-    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift."
+    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift + Space/Ctrl."
   );
 
   // We keep these refs so Three state survives React re-renders.
@@ -93,8 +92,7 @@ export default function VenueViewer() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  const fpsRootRef = useRef<ReturnType<typeof createRoot> | null>(null);
-  const fpsUpdateRef = useRef<(delta: number) => void>(() => undefined);
+  const fpsControllerRef = useRef<ReturnType<typeof createFpsController> | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const snapOnRef = useRef(false);
   const walkModeRef = useRef(false);
@@ -130,6 +128,7 @@ export default function VenueViewer() {
 
   useEffect(() => {
     walkModeRef.current = walkMode;
+    fpsControllerRef.current?.setEnabled(walkMode);
     if (controlsRef.current) {
       controlsRef.current.enabled = !walkMode && !draggingRef.current.active;
       controlsRef.current.update();
@@ -511,7 +510,7 @@ export default function VenueViewer() {
 
     select(meta);
     setHint(
-      "Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift. Red = invalid placement."
+      "Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift + Space/Ctrl. Red = invalid placement."
     );
   }
 
@@ -552,7 +551,7 @@ export default function VenueViewer() {
 
     const g = new THREE.Group();
 
-    // Example zones (rectangles) – placeholder for future polygon editor
+    // Example zones (rectangles) placeholder for future polygon editor
     // "usable area" + "keep-out" as translucent overlays
     const zoneMatUsable = new THREE.MeshBasicMaterial({ color: 0x33ff99, transparent: true, opacity: 0.12, depthWrite: false });
     const zoneMatKeepout = new THREE.MeshBasicMaterial({ color: 0xff3366, transparent: true, opacity: 0.18, depthWrite: false });
@@ -714,26 +713,18 @@ export default function VenueViewer() {
     rendererRef.current = renderer;
     controlsRef.current = controls;
 
-    const fpsRoot = createRoot(renderer.domElement);
-    fpsRoot.configure({
-      gl: renderer,
+    const fpsController = createFpsController({
       camera,
-      frameloop: "never"
+      scene,
+      domElement: renderer.domElement,
+      bounds: ROOM_BOUNDS,
+      eyeHeight: FPS_EYE_HEIGHT,
+      roomHeight: ROOM_HEIGHT_Y,
+      sensitivity: lookSensitivity,
+      invertY
     });
-    fpsRoot.render(
-      <FpsController
-        enabled={walkMode}
-        camera={camera}
-        scene={scene}
-        domElement={renderer.domElement}
-        bounds={ROOM_BOUNDS}
-        eyeHeight={FPS_EYE_HEIGHT}
-        sensitivity={lookSensitivity}
-        invertY={invertY}
-        updateRef={fpsUpdateRef}
-      />
-    );
-    fpsRootRef.current = fpsRoot;
+    fpsController.setEnabled(walkModeRef.current);
+    fpsControllerRef.current = fpsController;
 
     rebuildZones();
 
@@ -900,7 +891,7 @@ export default function VenueViewer() {
       raf = requestAnimationFrame(tick);
       const delta = clock.getDelta();
 
-      fpsUpdateRef.current(delta);
+      fpsControllerRef.current?.update(delta);
       controls.update();
       renderer.render(scene, camera);
     };
@@ -914,8 +905,8 @@ export default function VenueViewer() {
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("keydown", onKeyDown);
 
+      fpsController.dispose();
       controls.dispose();
-      fpsRoot.unmount();
       renderer.dispose();
 
       if (renderer.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
@@ -924,7 +915,7 @@ export default function VenueViewer() {
       cameraRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
-      fpsRootRef.current = null;
+      fpsControllerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measureOn]);
@@ -936,26 +927,11 @@ export default function VenueViewer() {
   }, [zonesOn]);
 
   useEffect(() => {
-    const root = fpsRootRef.current;
-    const camera = cameraRef.current;
-    const scene = sceneRef.current;
-    const renderer = rendererRef.current;
-    if (!root || !camera || !scene || !renderer) return;
-
-    root.render(
-      <FpsController
-        enabled={walkMode}
-        camera={camera}
-        scene={scene}
-        domElement={renderer.domElement}
-        bounds={ROOM_BOUNDS}
-        eyeHeight={FPS_EYE_HEIGHT}
-        sensitivity={lookSensitivity}
-        invertY={invertY}
-        updateRef={fpsUpdateRef}
-      />
-    );
-  }, [invertY, lookSensitivity, walkMode]);
+    const fpsController = fpsControllerRef.current;
+    if (!fpsController) return;
+    fpsController.setSensitivity(lookSensitivity);
+    fpsController.setInvertY(invertY);
+  }, [invertY, lookSensitivity]);
 
   return (
     <div className="w-full h-[calc(100vh-120px)] relative rounded-xl overflow-hidden border border-white/10">
@@ -964,7 +940,7 @@ export default function VenueViewer() {
 
       {/* UI overlay */}
       <div className="absolute top-3 left-3 flex flex-col gap-2 bg-black/40 border border-white/10 rounded-xl p-3 backdrop-blur">
-        <div className="text-white font-semibold">Omni-Twin — Viewer + Editor Demo</div>
+        <div className="text-white font-semibold">Omni-Twin Viewer + Editor Demo</div>
 
         <div className="flex flex-wrap gap-2">
           <button
@@ -1054,14 +1030,14 @@ export default function VenueViewer() {
             onClick={() => rotateSelected(rotationStep)}
             disabled={!selectedId}
           >
-            Rotate ⟲
+            Rotate CCW
           </button>
           <button
             className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={() => rotateSelected(-rotationStep)}
             disabled={!selectedId}
           >
-            Rotate ⟳
+            Rotate CW
           </button>
           <button
             className="px-3 py-2 rounded-lg bg-red-500/30 hover:bg-red-500/40 text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1075,7 +1051,9 @@ export default function VenueViewer() {
         <div className="text-xs text-white/80">Selected: {selectedLabel}</div>
         <div className="text-xs text-white/80">Measure: {measureText}</div>
         <div className="text-xs text-white/70 max-w-[340px]">{hint}</div>
-        <div className="text-[11px] text-white/50">Click to lock mouse • WASD move • Shift sprint • ESC unlock</div>
+        <div className="text-[11px] text-white/50">
+          Click to lock mouse - WASD move - Shift sprint - Space/Ctrl up/down - ESC unlock
+        </div>
       </div>
     </div>
   );
