@@ -65,7 +65,12 @@ const ROTATE_FREE_DEG = 5;
 const STAGE_HEIGHT = 0.4;
 const STAGE_WIDTH = 3.2;
 const STAGE_DEPTH = 2.2;
-const FPS_EYE_HEIGHT = 1.6;
+const FPS_EYE_HEIGHT = 1.7;
+const SPEED_PRESETS = [
+  { label: "Slow", value: 3.2 },
+  { label: "Normal", value: 4.5 },
+  { label: "Fast", value: 6.2 }
+] as const;
 
 function uid(prefix = "obj") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
@@ -79,12 +84,13 @@ export default function VenueViewer() {
   const [measureText, setMeasureText] = useState<string>("(measurement off)");
   const [snapOn, setSnapOn] = useState(false);
   const [walkMode, setWalkMode] = useState(false);
-  const [lookSensitivity, setLookSensitivity] = useState(1);
-  const [invertY, setInvertY] = useState(false);
+  const [fov, setFov] = useState(90);
+  const [speedIndex, setSpeedIndex] = useState(1);
+  const [gridOn, setGridOn] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>("(none)");
   const [hint, setHint] = useState<string>(
-    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift + Space/Ctrl."
+    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Use Mode toggle to switch Walk/Edit."
   );
 
   // We keep these refs so Three state survives React re-renders.
@@ -103,6 +109,7 @@ export default function VenueViewer() {
 
   const objsRef = useRef<ObjMeta[]>([]);
   const zonesGroupRef = useRef<THREE.Group | null>(null);
+  const gridRef = useRef<THREE.LineSegments | null>(null);
 
   // dragging state
   const draggingRef = useRef<{
@@ -510,7 +517,7 @@ export default function VenueViewer() {
 
     select(meta);
     setHint(
-      "Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Walk Mode uses WASD + Shift + Space/Ctrl. Red = invalid placement."
+      "Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Use Mode toggle for Walk/Edit. Red = invalid placement."
     );
   }
 
@@ -530,7 +537,7 @@ export default function VenueViewer() {
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
-    const mat = new THREE.LineBasicMaterial({ color: 0x1f2a35, transparent: true, opacity: 0.55 });
+    const mat = new THREE.LineBasicMaterial({ color: 0x8a96a3, transparent: true, opacity: 0.4 });
     return new THREE.LineSegments(geom, mat);
   }
 
@@ -630,12 +637,12 @@ export default function VenueViewer() {
 
     // --- init three ---
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0c0f14);
+    scene.background = new THREE.Color(0xdfe6ef);
 
     const { w, h } = getHostSize();
 
-    const camera = new THREE.PerspectiveCamera(55, w / h, 0.1, 200);
-    camera.position.set(0, 3, 6);
+    const camera = new THREE.PerspectiveCamera(90, w / h, 0.1, 200);
+    camera.position.set(0, 4.5, 9);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(w, h);
@@ -643,20 +650,30 @@ export default function VenueViewer() {
     host.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 0, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 2;
+    controls.maxDistance = 30;
+    controls.target.set(0, 0.8, 0);
     controls.update();
 
 
     // Lights
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 1.0);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+    scene.add(ambient);
+
+    const hemi = new THREE.HemisphereLight(0xe7f2ff, 0xaab3bd, 0.75);
     scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
-    dir.position.set(10, 15, 8);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+    dir.position.set(10, 14, 8);
     scene.add(dir);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.35);
+    fill.position.set(-8, 6, -6);
+    scene.add(fill);
 
     // Floor
     const floorGeom = new THREE.PlaneGeometry(ROOM_WIDTH_X, ROOM_LENGTH_Z);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x11161e, metalness: 0.0, roughness: 0.95 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xcdd4db, metalness: 0.0, roughness: 0.92 });
     const floor = new THREE.Mesh(floorGeom, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0;
@@ -664,11 +681,13 @@ export default function VenueViewer() {
 
     // Grid (1m)
     const grid = buildGrid(ROOM_WIDTH_X, ROOM_LENGTH_Z, 1);
+    grid.visible = gridOn;
+    gridRef.current = grid;
     scene.add(grid);
 
     // Walls
     const wallThickness = 0.12;
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a2330, metalness: 0.0, roughness: 0.9 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xe6eaee, metalness: 0.0, roughness: 0.9 });
     const wallLeft = new THREE.Mesh(
       new THREE.BoxGeometry(wallThickness, ROOM_HEIGHT_Y, ROOM_LENGTH_Z + wallThickness * 2),
       wallMat
@@ -699,7 +718,7 @@ export default function VenueViewer() {
 
     // simple pillars (visual-only placeholders)
     const pillarGeom = new THREE.CylinderGeometry(0.35, 0.35, 6, 18);
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x2a313c, roughness: 0.9 });
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xb8c0c8, roughness: 0.9 });
     const pillar1 = new THREE.Mesh(pillarGeom, pillarMat);
     pillar1.position.set(-4, 3, 2);
     scene.add(pillar1);
@@ -719,9 +738,7 @@ export default function VenueViewer() {
       domElement: renderer.domElement,
       bounds: ROOM_BOUNDS,
       eyeHeight: FPS_EYE_HEIGHT,
-      roomHeight: ROOM_HEIGHT_Y,
-      sensitivity: lookSensitivity,
-      invertY
+      moveSpeed: SPEED_PRESETS[speedIndex].value
     });
     fpsController.setEnabled(walkModeRef.current);
     fpsControllerRef.current = fpsController;
@@ -908,6 +925,11 @@ export default function VenueViewer() {
       fpsController.dispose();
       controls.dispose();
       renderer.dispose();
+      if (gridRef.current) {
+        gridRef.current.geometry.dispose();
+        const material = gridRef.current.material as THREE.Material;
+        material.dispose();
+      }
 
       if (renderer.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
 
@@ -916,6 +938,7 @@ export default function VenueViewer() {
       rendererRef.current = null;
       controlsRef.current = null;
       fpsControllerRef.current = null;
+      gridRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measureOn]);
@@ -927,11 +950,22 @@ export default function VenueViewer() {
   }, [zonesOn]);
 
   useEffect(() => {
+    const g = gridRef.current;
+    if (g) g.visible = gridOn;
+  }, [gridOn]);
+
+  useEffect(() => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }, [fov]);
+
+  useEffect(() => {
     const fpsController = fpsControllerRef.current;
     if (!fpsController) return;
-    fpsController.setSensitivity(lookSensitivity);
-    fpsController.setInvertY(invertY);
-  }, [invertY, lookSensitivity]);
+    fpsController.setMoveSpeed(SPEED_PRESETS[speedIndex].value);
+  }, [speedIndex]);
 
   return (
     <div className="w-full h-[calc(100vh-120px)] relative rounded-xl overflow-hidden border border-white/10">
@@ -966,6 +1000,20 @@ export default function VenueViewer() {
         <div className="flex flex-wrap gap-2">
           <button
             className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
+            onClick={() => setWalkMode((v) => !v)}
+          >
+            Mode: {walkMode ? "Walk" : "Edit"}
+          </button>
+
+          <button
+            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
+            onClick={() => setGridOn((v) => !v)}
+          >
+            Grid: {gridOn ? "ON" : "OFF"}
+          </button>
+
+          <button
+            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
             onClick={() => setZonesOn((v) => !v)}
           >
             Zones: {zonesOn ? "ON" : "OFF"}
@@ -995,32 +1043,34 @@ export default function VenueViewer() {
           >
             Snap: {snapOn ? "ON" : "OFF"}
           </button>
-
-          <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => setWalkMode((v) => !v)}
-          >
-            Walk Mode: {walkMode ? "ON" : "OFF"}
-          </button>
         </div>
 
         <div className="flex flex-col gap-2">
           <label className="text-xs text-white/80 flex items-center gap-2">
-            <span className="min-w-[80px]">Sensitivity</span>
+            <span className="min-w-[80px]">FOV</span>
             <input
               type="range"
-              min={0.2}
-              max={2.5}
-              step={0.1}
-              value={lookSensitivity}
-              onChange={(event) => setLookSensitivity(Number(event.target.value))}
+              min={70}
+              max={110}
+              step={1}
+              value={fov}
+              onChange={(event) => setFov(Number(event.target.value))}
               className="w-36 accent-sky-400"
             />
-            <span className="text-white/60 tabular-nums w-10">{lookSensitivity.toFixed(1)}</span>
+            <span className="text-white/60 tabular-nums w-10">{Math.round(fov)}</span>
           </label>
           <label className="text-xs text-white/80 flex items-center gap-2">
-            <input type="checkbox" checked={invertY} onChange={() => setInvertY((v) => !v)} />
-            Invert Y
+            <span className="min-w-[80px]">Speed</span>
+            <input
+              type="range"
+              min={0}
+              max={SPEED_PRESETS.length - 1}
+              step={1}
+              value={speedIndex}
+              onChange={(event) => setSpeedIndex(Number(event.target.value))}
+              className="w-36 accent-sky-400"
+            />
+            <span className="text-white/60 w-14">{SPEED_PRESETS[speedIndex].label}</span>
           </label>
         </div>
 
@@ -1052,7 +1102,9 @@ export default function VenueViewer() {
         <div className="text-xs text-white/80">Measure: {measureText}</div>
         <div className="text-xs text-white/70 max-w-[340px]">{hint}</div>
         <div className="text-[11px] text-white/50">
-          Click to lock mouse - WASD move - Shift sprint - Space/Ctrl up/down - ESC unlock
+          {walkMode
+            ? "Walk: click to lock, WASD, Shift sprint, Esc unlock"
+            : "Edit: drag to orbit, right-drag pan, scroll zoom"}
         </div>
       </div>
     </div>
