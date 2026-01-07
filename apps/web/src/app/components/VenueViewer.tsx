@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 
 type PlaceType = "table" | "chair" | "stage";
 
@@ -48,16 +49,25 @@ type Point2D = {
   z: number;
 };
 
+const ROOM_WIDTH_X = 10;
+const ROOM_LENGTH_Z = 21;
+const ROOM_HEIGHT_Y = 7;
 const ROOM_BOUNDS = {
-  minX: -10,
-  maxX: 10,
-  minZ: -6,
-  maxZ: 6
+  minX: -ROOM_WIDTH_X / 2,
+  maxX: ROOM_WIDTH_X / 2,
+  minZ: -ROOM_LENGTH_Z / 2,
+  maxZ: ROOM_LENGTH_Z / 2
 };
 
 const GRID_SNAP = 0.25;
 const ROTATE_SNAP_DEG = 15;
 const ROTATE_FREE_DEG = 5;
+const STAGE_HEIGHT = 0.4;
+const STAGE_WIDTH = 3.2;
+const STAGE_DEPTH = 2.2;
+const WALK_SPEED = 2.6;
+const WALK_EYE_HEIGHT = 1.6;
+const WALK_MARGIN = 0.35;
 
 function uid(prefix = "obj") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
@@ -70,10 +80,11 @@ export default function VenueViewer() {
   const [measureOn, setMeasureOn] = useState(false);
   const [measureText, setMeasureText] = useState<string>("(measurement off)");
   const [snapOn, setSnapOn] = useState(false);
+  const [walkMode, setWalkMode] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>("(none)");
   const [hint, setHint] = useState<string>(
-    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Snap toggles grid."
+    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Snap toggles grid. Walk Mode uses WASD."
   );
 
   // We keep these refs so Three state survives React re-renders.
@@ -81,8 +92,11 @@ export default function VenueViewer() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const walkControlsRef = useRef<PointerLockControls | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const snapOnRef = useRef(false);
+  const walkModeRef = useRef(false);
+  const movementRef = useRef({ forward: false, back: false, left: false, right: false });
 
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const mouseNdc = useMemo(() => new THREE.Vector2(), []);
@@ -112,6 +126,28 @@ export default function VenueViewer() {
   useEffect(() => {
     snapOnRef.current = snapOn;
   }, [snapOn]);
+
+  useEffect(() => {
+    walkModeRef.current = walkMode;
+    if (!walkMode && walkControlsRef.current?.isLocked) {
+      walkControlsRef.current.unlock();
+    }
+    if (controlsRef.current) {
+      controlsRef.current.enabled = !walkMode && !draggingRef.current.active;
+      controlsRef.current.update();
+    }
+    if (!walkMode) {
+      movementRef.current = { forward: false, back: false, left: false, right: false };
+    }
+    if (walkMode && cameraRef.current) {
+      if (rendererRef.current && draggingRef.current.pointerId !== undefined) {
+        rendererRef.current.domElement.releasePointerCapture(draggingRef.current.pointerId);
+      }
+      draggingRef.current = { active: false };
+      cameraRef.current.position.y = WALK_EYE_HEIGHT;
+      clampToRoom(cameraRef.current.position, WALK_MARGIN);
+    }
+  }, [walkMode]);
 
   const rotationStep = snapOn ? ROTATE_SNAP_DEG : ROTATE_FREE_DEG;
 
@@ -158,6 +194,11 @@ export default function VenueViewer() {
     if (!snapOnRef.current) return;
     pos.x = snapValue(pos.x, GRID_SNAP);
     pos.z = snapValue(pos.z, GRID_SNAP);
+  }
+
+  function clampToRoom(pos: THREE.Vector3, margin = 0) {
+    pos.x = clamp(pos.x, ROOM_BOUNDS.minX + margin, ROOM_BOUNDS.maxX - margin);
+    pos.z = clamp(pos.z, ROOM_BOUNDS.minZ + margin, ROOM_BOUNDS.maxZ - margin);
   }
 
   function toShape(meta: ObjMeta, pos: THREE.Vector3, rotDeg?: number): Shape2D {
@@ -215,7 +256,7 @@ export default function VenueViewer() {
     const dx = a.x - b.x;
     const dz = a.z - b.z;
     const radius = a.radius + b.radius;
-    return dx * dx + dz * dz <= radius * radius;
+    return dx * dx + dz * dz < radius * radius;
   }
 
   function rectRectOverlap(a: RectShape, b: RectShape): boolean {
@@ -253,7 +294,7 @@ export default function VenueViewer() {
     const deltaX = localX - closestX;
     const deltaZ = localZ - closestZ;
 
-    return deltaX * deltaX + deltaZ * deltaZ <= circle.radius * circle.radius;
+    return deltaX * deltaX + deltaZ * deltaZ < circle.radius * circle.radius;
   }
 
   function getRectAxes(rect: RectShape): Point2D[] {
@@ -301,7 +342,7 @@ export default function VenueViewer() {
   }
 
   function rangesOverlap(a: { min: number; max: number }, b: { min: number; max: number }): boolean {
-    return a.min <= b.max && b.min <= a.max;
+    return a.min < b.max && b.min < a.max;
   }
 
   function clamp(value: number, min: number, max: number): number {
@@ -328,6 +369,26 @@ export default function VenueViewer() {
     }
 
     return true;
+  }
+
+  function getStageStackY(meta: ObjMeta, pos: THREE.Vector3, rotDeg: number) {
+    if (meta.type !== "stage") {
+      return meta.mesh.position.y;
+    }
+
+    const candidateShape = toShape(meta, pos, rotDeg);
+    let highestTop = 0;
+
+    for (const other of objsRef.current) {
+      if (other.id === meta.id || other.type !== "stage") continue;
+      const otherShape = toShape(other, other.mesh.position);
+      if (!shapeOverlap(candidateShape, otherShape)) continue;
+
+      const otherTop = other.mesh.position.y + STAGE_HEIGHT / 2;
+      highestTop = Math.max(highestTop, otherTop);
+    }
+
+    return highestTop + STAGE_HEIGHT / 2;
   }
 
   function colorize(meta: ObjMeta, mode: "base" | "bad" | "selected") {
@@ -371,6 +432,9 @@ export default function VenueViewer() {
     const finalDeg = snapOnRef.current ? snapValue(nextDeg, ROTATE_SNAP_DEG) : nextDeg;
 
     meta.mesh.rotation.y = THREE.MathUtils.degToRad(finalDeg);
+    if (meta.type === "stage") {
+      meta.mesh.position.y = getStageStackY(meta, meta.mesh.position, finalDeg);
+    }
     const ok = isValidPlacement(meta, meta.mesh.position, finalDeg);
     colorize(meta, ok ? "selected" : "bad");
   }
@@ -398,7 +462,7 @@ export default function VenueViewer() {
     }
     draggingRef.current = { active: false };
     if (controlsRef.current) {
-      controlsRef.current.enabled = true;
+      controlsRef.current.enabled = !walkModeRef.current;
       controlsRef.current.update();
     }
     select(undefined);
@@ -432,12 +496,12 @@ export default function VenueViewer() {
       mesh = m;
     } else {
       // stage
-      footprint = { kind: "rect", width: 3.2, depth: 2.2 };
+      footprint = { kind: "rect", width: STAGE_WIDTH, depth: STAGE_DEPTH };
       baseColor = new THREE.Color(0.65, 0.6, 0.75);
-      const geom = new THREE.BoxGeometry(3.2, 0.4, 2.2);
+      const geom = new THREE.BoxGeometry(STAGE_WIDTH, STAGE_HEIGHT, STAGE_DEPTH);
       const mat = new THREE.MeshStandardMaterial({ color: baseColor });
       const m = new THREE.Mesh(geom, mat);
-      m.position.y = 0.2;
+      m.position.y = STAGE_HEIGHT / 2;
       mesh = m;
     }
 
@@ -446,14 +510,39 @@ export default function VenueViewer() {
     const meta: ObjMeta = { id, type, footprint, mesh, baseColor };
 
     // Place at a safe starting spot
-    const start = new THREE.Vector3(-6, mesh.position.y, -4);
-    if (isValidPlacement(meta, start)) mesh.position.set(start.x, start.y, start.z);
+    const start = new THREE.Vector3(ROOM_BOUNDS.minX + 1.5, mesh.position.y, ROOM_BOUNDS.minZ + 1.5);
+    if (meta.type === "stage") {
+      start.y = getStageStackY(meta, start, 0);
+    }
+    if (isValidPlacement(meta, start)) {
+      mesh.position.set(start.x, start.y, start.z);
+    }
 
     objsRef.current.push(meta);
     scene.add(mesh);
 
     select(meta);
-    setHint("Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Red = invalid placement.");
+    setHint("Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Walk Mode uses WASD. Red = invalid placement.");
+  }
+
+  function buildGrid(width: number, length: number, step: number) {
+    const points: number[] = [];
+    const halfW = width / 2;
+    const halfL = length / 2;
+    const y = 0.01;
+
+    for (let x = -halfW; x <= halfW + 0.001; x += step) {
+      points.push(x, y, -halfL, x, y, halfL);
+    }
+
+    for (let z = -halfL; z <= halfL + 0.001; z += step) {
+      points.push(-halfW, y, z, halfW, y, z);
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    const mat = new THREE.LineBasicMaterial({ color: 0x1f2a35, transparent: true, opacity: 0.55 });
+    return new THREE.LineSegments(geom, mat);
   }
 
   function rebuildZones() {
@@ -479,17 +568,17 @@ export default function VenueViewer() {
     const zoneMatKeepout = new THREE.MeshBasicMaterial({ color: 0xff3366, transparent: true, opacity: 0.18, depthWrite: false });
 
     // Usable: big rectangle
-    const usable = new THREE.PlaneGeometry(20, 12);
+    const usable = new THREE.PlaneGeometry(ROOM_WIDTH_X, ROOM_LENGTH_Z);
     const usableMesh = new THREE.Mesh(usable, zoneMatUsable);
     usableMesh.rotation.x = -Math.PI / 2;
     usableMesh.position.y = 0.011;
     g.add(usableMesh);
 
     // Keep-out: small rectangle near "top"
-    const keepout = new THREE.PlaneGeometry(4, 2);
+    const keepout = new THREE.PlaneGeometry(3, 2);
     const keepoutMesh = new THREE.Mesh(keepout, zoneMatKeepout);
     keepoutMesh.rotation.x = -Math.PI / 2;
-    keepoutMesh.position.set(5, 0.012, 4);
+    keepoutMesh.position.set(2.5, 0.012, 6);
     g.add(keepoutMesh);
 
     zonesGroupRef.current = g;
@@ -557,7 +646,7 @@ export default function VenueViewer() {
     const { w, h } = getHostSize();
 
     const camera = new THREE.PerspectiveCamera(55, w / h, 0.1, 200);
-    camera.position.set(12, 10, 12);
+    camera.position.set(0, 3, 6);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(w, h);
@@ -568,6 +657,8 @@ export default function VenueViewer() {
     controls.target.set(0, 0, 0);
     controls.update();
 
+    const walkControls = new PointerLockControls(camera, renderer.domElement);
+
     // Lights
     const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 1.0);
     scene.add(hemi);
@@ -576,17 +667,47 @@ export default function VenueViewer() {
     scene.add(dir);
 
     // Floor
-    const floorGeom = new THREE.PlaneGeometry(20, 12);
+    const floorGeom = new THREE.PlaneGeometry(ROOM_WIDTH_X, ROOM_LENGTH_Z);
     const floorMat = new THREE.MeshStandardMaterial({ color: 0x11161e, metalness: 0.0, roughness: 0.95 });
     const floor = new THREE.Mesh(floorGeom, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0;
     scene.add(floor);
 
-    // Grid
-    const grid = new THREE.GridHelper(20, 20, 0x2b3a4a, 0x1c2531);
-    grid.position.y = 0.002;
+    // Grid (1m)
+    const grid = buildGrid(ROOM_WIDTH_X, ROOM_LENGTH_Z, 1);
     scene.add(grid);
+
+    // Walls
+    const wallThickness = 0.12;
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a2330, metalness: 0.0, roughness: 0.9 });
+    const wallLeft = new THREE.Mesh(
+      new THREE.BoxGeometry(wallThickness, ROOM_HEIGHT_Y, ROOM_LENGTH_Z + wallThickness * 2),
+      wallMat
+    );
+    wallLeft.position.set(ROOM_BOUNDS.minX - wallThickness / 2, ROOM_HEIGHT_Y / 2, 0);
+    scene.add(wallLeft);
+
+    const wallRight = new THREE.Mesh(
+      new THREE.BoxGeometry(wallThickness, ROOM_HEIGHT_Y, ROOM_LENGTH_Z + wallThickness * 2),
+      wallMat
+    );
+    wallRight.position.set(ROOM_BOUNDS.maxX + wallThickness / 2, ROOM_HEIGHT_Y / 2, 0);
+    scene.add(wallRight);
+
+    const wallFront = new THREE.Mesh(
+      new THREE.BoxGeometry(ROOM_WIDTH_X + wallThickness * 2, ROOM_HEIGHT_Y, wallThickness),
+      wallMat
+    );
+    wallFront.position.set(0, ROOM_HEIGHT_Y / 2, ROOM_BOUNDS.minZ - wallThickness / 2);
+    scene.add(wallFront);
+
+    const wallBack = new THREE.Mesh(
+      new THREE.BoxGeometry(ROOM_WIDTH_X + wallThickness * 2, ROOM_HEIGHT_Y, wallThickness),
+      wallMat
+    );
+    wallBack.position.set(0, ROOM_HEIGHT_Y / 2, ROOM_BOUNDS.maxZ + wallThickness / 2);
+    scene.add(wallBack);
 
     // simple pillars (visual-only placeholders)
     const pillarGeom = new THREE.CylinderGeometry(0.35, 0.35, 6, 18);
@@ -603,6 +724,7 @@ export default function VenueViewer() {
     cameraRef.current = camera;
     rendererRef.current = renderer;
     controlsRef.current = controls;
+    walkControlsRef.current = walkControls;
 
     rebuildZones();
 
@@ -616,6 +738,13 @@ export default function VenueViewer() {
 
     const onPointerDown = (ev: PointerEvent) => {
       if (!sceneRef.current || !cameraRef.current || !rendererRef.current) return;
+
+      if (walkModeRef.current) {
+        if (walkControlsRef.current && !walkControlsRef.current.isLocked) {
+          walkControlsRef.current.lock();
+        }
+        return;
+      }
 
       setMouseFromEvent(ev, renderer.domElement);
 
@@ -688,9 +817,12 @@ export default function VenueViewer() {
       const offset = draggingRef.current.dragOffset ?? new THREE.Vector3();
       const nextPos = floorHit.clone().add(offset);
 
-      // keep Y (height) constant
-      nextPos.y = meta.mesh.position.y;
       applySnapPosition(nextPos);
+      if (meta.type === "stage") {
+        nextPos.y = getStageStackY(meta, nextPos, getRotationDeg(meta));
+      } else {
+        nextPos.y = meta.mesh.position.y;
+      }
 
       const ok = isValidPlacement(meta, nextPos);
       if (ok) {
@@ -721,12 +853,25 @@ export default function VenueViewer() {
         rendererRef.current.domElement.releasePointerCapture(draggingRef.current.pointerId);
       }
       if (controlsRef.current) {
-        controlsRef.current.enabled = true;
+        controlsRef.current.enabled = !walkModeRef.current;
       }
       draggingRef.current = { active: false };
     };
 
     const onKeyDown = (ev: KeyboardEvent) => {
+      const key = ev.key.toLowerCase();
+
+      if (walkModeRef.current) {
+        if (key === "w") movementRef.current.forward = true;
+        if (key === "s") movementRef.current.back = true;
+        if (key === "a") movementRef.current.left = true;
+        if (key === "d") movementRef.current.right = true;
+        if (key === "w" || key === "a" || key === "s" || key === "d") {
+          ev.preventDefault();
+        }
+        return;
+      }
+
       if (ev.key === "Delete" || ev.key === "Backspace") {
         ev.preventDefault();
         deleteSelected();
@@ -737,9 +882,17 @@ export default function VenueViewer() {
       if (!meta) return;
 
       const step = getRotationStep();
-      const key = ev.key.toLowerCase();
       if (key === "q") rotateSelected(step);
       if (key === "e") rotateSelected(-step);
+    };
+
+    const onKeyUp = (ev: KeyboardEvent) => {
+      if (!walkModeRef.current) return;
+      const key = ev.key.toLowerCase();
+      if (key === "w") movementRef.current.forward = false;
+      if (key === "s") movementRef.current.back = false;
+      if (key === "a") movementRef.current.left = false;
+      if (key === "d") movementRef.current.right = false;
     };
 
     window.addEventListener("resize", onResize);
@@ -747,10 +900,45 @@ export default function VenueViewer() {
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+
+    const clock = new THREE.Clock();
+    const walkDirection = new THREE.Vector3();
+    const walkRight = new THREE.Vector3();
+    const walkMove = new THREE.Vector3();
 
     let raf = 0;
     const tick = () => {
       raf = requestAnimationFrame(tick);
+      const delta = clock.getDelta();
+
+      if (walkModeRef.current && walkControlsRef.current?.isLocked) {
+        const movement = movementRef.current;
+        const forward = (movement.forward ? 1 : 0) + (movement.back ? -1 : 0);
+        const right = (movement.right ? 1 : 0) + (movement.left ? -1 : 0);
+
+        if (cameraRef.current && (forward !== 0 || right !== 0)) {
+          cameraRef.current.getWorldDirection(walkDirection);
+          walkDirection.y = 0;
+          walkDirection.normalize();
+          walkRight.crossVectors(walkDirection, cameraRef.current.up).normalize();
+
+          walkMove.set(0, 0, 0);
+          walkMove.addScaledVector(walkDirection, forward);
+          walkMove.addScaledVector(walkRight, right);
+
+          if (walkMove.lengthSq() > 0) {
+            walkMove.normalize();
+            cameraRef.current.position.addScaledVector(walkMove, WALK_SPEED * delta);
+          }
+        }
+
+        if (cameraRef.current) {
+          cameraRef.current.position.y = WALK_EYE_HEIGHT;
+          clampToRoom(cameraRef.current.position, WALK_MARGIN);
+        }
+      }
+
       controls.update();
       renderer.render(scene, camera);
     };
@@ -763,8 +951,10 @@ export default function VenueViewer() {
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
 
       controls.dispose();
+      walkControls.disconnect();
       renderer.dispose();
 
       if (renderer.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
@@ -773,6 +963,7 @@ export default function VenueViewer() {
       cameraRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
+      walkControlsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measureOn]);
@@ -845,6 +1036,22 @@ export default function VenueViewer() {
           >
             Snap: {snapOn ? "ON" : "OFF"}
           </button>
+
+          <button
+            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
+            onClick={() =>
+              setWalkMode((v) => {
+                const next = !v;
+                walkModeRef.current = next;
+                if (!next && walkControlsRef.current?.isLocked) {
+                  walkControlsRef.current.unlock();
+                }
+                return next;
+              })
+            }
+          >
+            Walk Mode: {walkMode ? "ON" : "OFF"}
+          </button>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -874,6 +1081,7 @@ export default function VenueViewer() {
         <div className="text-xs text-white/80">Selected: {selectedLabel}</div>
         <div className="text-xs text-white/80">Measure: {measureText}</div>
         <div className="text-xs text-white/70 max-w-[340px]">{hint}</div>
+        <div className="text-[11px] text-white/50">Walk Mode: Click to lock mouse - WASD move - ESC unlock</div>
       </div>
     </div>
   );
