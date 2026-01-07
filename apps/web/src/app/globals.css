@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f1e8;
+  --foreground: #1f1b16;
+  --surface: #ffffff;
+  --surface-muted: #f2ece2;
+  --accent: #d36b3d;
+  --accent-2: #2d6f73;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --font-sans: var(--font-body);
+  --font-serif: var(--font-display);
+}
+
+body {
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 520px at 12% -10%, rgba(255, 204, 153, 0.55), rgba(255, 204, 153, 0)),
+    radial-gradient(1000px 620px at 88% 0%, rgba(165, 215, 230, 0.55), rgba(165, 215, 230, 0)),
+    linear-gradient(180deg, #fbf8f2 0%, #eef1f5 100%);
+  color: var(--foreground);
+  font-family: var(--font-body), "Segoe UI", Tahoma, sans-serif;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-soft {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.anim-rise {
+  animation: rise-in 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.anim-delay-1 {
+  animation-delay: 120ms;
+}
+
+.anim-delay-2 {
+  animation-delay: 240ms;
+}
+
+.anim-fade {
+  animation: fade-soft 900ms ease-out both;
+}
