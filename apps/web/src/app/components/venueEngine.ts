@@ -1,9 +1,8 @@
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { createFpsController } from "./FpsController";
+import { createRTSCameraControls } from "./RTSCameraControls";
 
 export type PlaceType = "table" | "chair" | "stage";
-export type EngineMode = "walk" | "edit";
+export type EngineMode = "nav" | "edit";
 
 export type SelectedInfo = {
   id: string;
@@ -23,7 +22,7 @@ export type EngineOptions = {
   snap: boolean;
   grid: boolean;
   fov: number;
-  moveSpeed: number;
+  panSpeed: number;
   onSelect?: (info: SelectedInfo | null) => void;
   onWarning?: (warning: string | null) => void;
   onHistoryChange?: (state: HistoryState) => void;
@@ -34,7 +33,7 @@ export type EngineApi = {
   setSnap: (snap: boolean) => void;
   setGrid: (grid: boolean) => void;
   setFov: (fov: number) => void;
-  setMoveSpeed: (speed: number) => void;
+  setPanSpeed: (speed: number) => void;
   addObject: (type: PlaceType) => void;
   rotateSelected: (direction: "left" | "right") => void;
   deleteSelected: () => void;
@@ -125,7 +124,6 @@ const ROTATE_FREE_DEG = 5;
 const STAGE_HEIGHT = 0.4;
 const STAGE_WIDTH = 3.2;
 const STAGE_DEPTH = 2.2;
-const WALK_EYE_HEIGHT = 1.7;
 
 const OUTLINE_SELECTED = 0x3aa2ff;
 const OUTLINE_HOVER = 0xb0d9ff;
@@ -326,25 +324,20 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   host.appendChild(renderer.domElement);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.enablePan = true;
-  controls.enableZoom = true;
-  controls.screenSpacePanning = true;
-  controls.minDistance = 2;
-  controls.maxDistance = 30;
-  controls.target.set(0, 0.8, 0);
-  controls.update();
-
-  const fpsController = createFpsController({
+  const rtsControls = createRTSCameraControls({
     camera,
-    scene,
     domElement: renderer.domElement,
     bounds: ROOM_BOUNDS,
-    eyeHeight: WALK_EYE_HEIGHT,
-    moveSpeed: options.moveSpeed
+    panSpeed: options.panSpeed,
+    yaw: THREE.MathUtils.degToRad(35),
+    pitch: THREE.MathUtils.degToRad(58),
+    distance: 18,
+    minDistance: 7,
+    maxDistance: 30,
+    edgeMarginPx: 26,
+    padding: 0.8
   });
+  rtsControls.update(0);
 
   const objectsGroup = new THREE.Group();
   scene.add(objectsGroup);
@@ -793,9 +786,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     dragging.preview = ghost;
     meta.mesh.visible = false;
 
-    if (controls.enabled) {
-      controls.enabled = false;
-    }
+    rtsControls.setPanInputsEnabled(false);
 
     renderer.domElement.setPointerCapture?.(pointerId);
   }
@@ -863,7 +854,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     dragging.startPos = undefined;
     dragging.valid = undefined;
 
-    controls.enabled = mode === "edit";
+    rtsControls.setPanInputsEnabled(true);
     setWarning(null);
 
     if (apply && startPos && !startPos.equals(meta.mesh.position)) {
@@ -943,10 +934,20 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   }
 
   function handleKeyDown(ev: KeyboardEvent) {
-    if (mode !== "edit") return;
     if (shouldIgnoreKey(ev)) return;
 
     const key = ev.key.toLowerCase();
+
+    if (ev.code === "Space") {
+      const meta = selectedId ? objs.find((obj) => obj.id === selectedId) : undefined;
+      if (meta) {
+        ev.preventDefault();
+        rtsControls.focusOn(meta.mesh.position);
+      }
+      return;
+    }
+
+    if (mode !== "edit") return;
 
     if (ev.key === "Delete" || ev.key === "Backspace") {
       ev.preventDefault();
@@ -976,8 +977,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   const tick = () => {
     raf = requestAnimationFrame(tick);
     const delta = clock.getDelta();
-    fpsController.update(delta);
-    controls.update();
+    rtsControls.update(delta);
     updateSelectionOutline();
     renderer.render(scene, camera);
   };
@@ -993,13 +993,13 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   function setMode(nextMode: EngineMode) {
     mode = nextMode;
 
-    fpsController.setEnabled(mode === "walk");
-    if (mode === "walk" && dragging.active) {
+    if (mode !== "edit" && dragging.active) {
       endDrag(false);
     }
 
-    controls.enabled = mode === "edit" && !dragging.active;
-    if (mode === "walk") {
+    rtsControls.setPanInputsEnabled(!dragging.active);
+
+    if (mode !== "edit") {
       renderer.domElement.style.cursor = "default";
       hoveredId = null;
       updateHoverOutline(undefined);
@@ -1019,8 +1019,8 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     camera.updateProjectionMatrix();
   }
 
-  function setMoveSpeed(speed: number) {
-    fpsController.setMoveSpeed(speed);
+  function setPanSpeed(speed: number) {
+    rtsControls.setPanSpeed(speed);
   }
 
   function dispose() {
@@ -1028,8 +1028,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     if (dragging.active) {
       endDrag(false);
     }
-    fpsController.dispose();
-    controls.dispose();
+    rtsControls.dispose();
     renderer.domElement.removeEventListener("pointerdown", handlePointerDown, pointerDownOptions);
     renderer.domElement.removeEventListener("pointermove", handlePointerMove);
     renderer.domElement.removeEventListener("pointerup", handlePointerUp);
@@ -1059,7 +1058,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     setSnap,
     setGrid,
     setFov,
-    setMoveSpeed,
+    setPanSpeed,
     addObject,
     rotateSelected,
     deleteSelected,

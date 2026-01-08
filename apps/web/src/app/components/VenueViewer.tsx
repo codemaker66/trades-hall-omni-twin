@@ -38,7 +38,7 @@ export default function VenueViewer() {
       snap: snapOn,
       grid: gridOn,
       fov,
-      moveSpeed: SPEED_PRESETS[speedIndex].value,
+      panSpeed: SPEED_PRESETS[speedIndex].value,
       onSelect: setSelected,
       onWarning: setWarning,
       onHistoryChange: setHistoryState
@@ -73,7 +73,7 @@ export default function VenueViewer() {
   }, [fov]);
 
   useEffect(() => {
-    engineRef.current?.setMoveSpeed(SPEED_PRESETS[speedIndex].value);
+    engineRef.current?.setPanSpeed(SPEED_PRESETS[speedIndex].value);
   }, [speedIndex]);
 
   const addObject = (type: PlaceType) => engineRef.current?.addObject(type);
@@ -91,11 +91,11 @@ export default function VenueViewer() {
         <div className="flex flex-wrap items-center gap-2 text-white">
           <button
             className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-              mode === "walk" ? "bg-sky-500/80 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
+              mode === "nav" ? "bg-sky-500/80 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
             }`}
-            onClick={() => setMode((current) => (current === "walk" ? "edit" : "walk"))}
+            onClick={() => setMode((current) => (current === "nav" ? "edit" : "nav"))}
           >
-            Mode: {mode === "walk" ? "Walk" : "Edit"}
+            Mode: {mode === "nav" ? "Nav" : "Edit"}
           </button>
           <button
             className={`rounded-lg px-3 py-2 text-sm ${
@@ -242,7 +242,7 @@ export default function VenueViewer() {
               <span className="w-10 text-right text-white">{Math.round(fov)}</span>
             </label>
             <label className="flex items-center justify-between gap-3 text-xs text-white/70">
-              <span>Speed</span>
+              <span>Pan Speed</span>
               <input
                 type="range"
                 min={0}
@@ -260,7 +260,7 @@ export default function VenueViewer() {
 
       <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-between gap-3 border-t border-white/10 bg-slate-900/70 px-4 py-2 text-xs text-white/70 backdrop-blur">
         <div className="flex items-center gap-3">
-          <span className="font-semibold text-white">Mode: {mode === "walk" ? "Walk" : "Edit"}</span>
+          <span className="font-semibold text-white">Mode: {mode === "nav" ? "Nav" : "Edit"}</span>
           <span>Snap: {snapOn ? "ON" : "OFF"}</span>
           <span>Grid: {gridOn ? "ON" : "OFF"}</span>
         </div>
