@@ -87,6 +87,7 @@ type Point2D = {
 
 type DragState = {
   active: boolean;
+  placing?: boolean;
   target?: ObjMeta;
   pointerId?: number;
   offset?: THREE.Vector3;
@@ -307,6 +308,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
 
   let mode: EngineMode = options.mode;
   let snapOn = options.snap;
+  let altDown = false;
   let currentWarning: string | null = null;
 
   const scene = new THREE.Scene();
@@ -330,11 +332,12 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     bounds: ROOM_BOUNDS,
     panSpeed: options.panSpeed,
     yaw: THREE.MathUtils.degToRad(45),
-    pitch: THREE.MathUtils.degToRad(50),
-    distance: 20,
-    minDistance: 8,
-    maxDistance: 34,
-    edgeMarginPx: 34,
+    distance: 22,
+    minDistance: 7,
+    maxDistance: 36,
+    minPitch: THREE.MathUtils.degToRad(32),
+    maxPitch: THREE.MathUtils.degToRad(68),
+    edgeMarginPx: 38,
     zoomSpeed: 9,
     enableRotate: true,
     padding: 0.8
@@ -352,6 +355,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   let selectedId: string | null = null;
   let hoveredId: string | null = null;
   const dragging: DragState = { active: false };
+  let lastPointerClient: { x: number; y: number } | null = null;
 
   const selectionOutline = new THREE.BoxHelper(new THREE.Object3D(), OUTLINE_SELECTED);
   const hoverOutline = new THREE.BoxHelper(new THREE.Object3D(), OUTLINE_HOVER);
@@ -481,11 +485,16 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     notifyHistory();
   }
 
-  function setMouseFromEvent(ev: PointerEvent) {
+  function setMouseFromClient(clientX: number, clientY: number) {
     const rect = renderer.domElement.getBoundingClientRect();
-    const x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-    const y = -(((ev.clientY - rect.top) / rect.height) * 2 - 1);
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
     mouseNdc.set(x, y);
+  }
+
+  function setMouseFromEvent(ev: PointerEvent) {
+    lastPointerClient = { x: ev.clientX, y: ev.clientY };
+    setMouseFromClient(ev.clientX, ev.clientY);
   }
 
   function intersectFloor() {
@@ -707,6 +716,10 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     if (object.parent) object.parent.remove(object);
   }
 
+  function beginPlacement(meta: ObjMeta) {
+    startDrag(meta, undefined, new THREE.Vector3(0, 0, 0), true);
+  }
+
   function addObject(type: PlaceType) {
     if (dragging.active) endDrag(false);
 
@@ -720,19 +733,23 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     objs.push(meta);
     objectsGroup.add(meta.mesh);
     select(meta);
-    setWarning(null);
-    pushHistory();
+    setWarning("Click to place. Esc cancels. Hold Alt for free placement.");
+    beginPlacement(meta);
+    if (lastPointerClient) {
+      updateDragFromClient(lastPointerClient.x, lastPointerClient.y);
+    }
   }
 
   function rotateSelected(direction: "left" | "right") {
     const meta = selectedId ? objs.find((obj) => obj.id === selectedId) : undefined;
     if (!meta) return;
 
-    const step = getRotationStep(snapOn);
+    const snapActive = snapOn && !altDown;
+    const step = getRotationStep(snapActive);
     const currentDeg = getRotationDeg(meta);
-    const baseDeg = snapOn ? snapValue(currentDeg, ROTATE_SNAP_DEG) : currentDeg;
+    const baseDeg = snapActive ? snapValue(currentDeg, ROTATE_SNAP_DEG) : currentDeg;
     const nextDeg = baseDeg + (direction === "left" ? step : -step);
-    const finalDeg = snapOn ? snapValue(nextDeg, ROTATE_SNAP_DEG) : nextDeg;
+    const finalDeg = snapActive ? snapValue(nextDeg, ROTATE_SNAP_DEG) : nextDeg;
 
     const prevRotation = meta.mesh.rotation.y;
     const prevPosY = meta.mesh.position.y;
@@ -770,8 +787,9 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     pushHistory();
   }
 
-  function startDrag(meta: ObjMeta, pointerId: number, offset: THREE.Vector3) {
+  function startDrag(meta: ObjMeta, pointerId: number | undefined, offset: THREE.Vector3, placing = false) {
     dragging.active = true;
+    dragging.placing = placing;
     dragging.target = meta;
     dragging.pointerId = pointerId;
     dragging.offset = offset;
@@ -788,20 +806,24 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     dragging.preview = ghost;
     meta.mesh.visible = false;
 
-    rtsControls.setPanInputsEnabled(false);
+    if (!placing) {
+      rtsControls.setPanInputsEnabled(false);
+    }
 
-    renderer.domElement.setPointerCapture?.(pointerId);
+    if (pointerId !== undefined) {
+      renderer.domElement.setPointerCapture?.(pointerId);
+    }
   }
 
-  function updateDrag(ev: PointerEvent) {
+  function updateDragFromClient(clientX: number, clientY: number) {
     if (!dragging.active || !dragging.target || !dragging.preview) return;
 
-    setMouseFromEvent(ev);
+    setMouseFromClient(clientX, clientY);
     const floorHit = intersectFloor();
     const offset = dragging.offset ?? new THREE.Vector3();
     const nextPos = floorHit.clone().add(offset);
 
-    applySnapPosition(nextPos, snapOn);
+    applySnapPosition(nextPos, snapOn && !altDown);
     if (dragging.target.type === "stage") {
       nextPos.y = getStageStackY(dragging.target, nextPos, getRotationDeg(dragging.target));
     } else {
@@ -822,25 +844,37 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     }
   }
 
+  function updateDrag(ev: PointerEvent) {
+    lastPointerClient = { x: ev.clientX, y: ev.clientY };
+    updateDragFromClient(ev.clientX, ev.clientY);
+  }
+
   function endDrag(apply: boolean) {
     if (!dragging.active || !dragging.target) return;
 
     const meta = dragging.target;
     const finalPos = dragging.lastGoodPos?.clone() ?? meta.mesh.position.clone();
     const startPos = dragging.startPos?.clone();
+    const wasPlacing = dragging.placing === true;
+    const shouldApply = apply && dragging.valid;
 
     if (dragging.preview) {
       disposeObject(dragging.preview);
       dragging.preview = undefined;
     }
 
-    meta.mesh.visible = true;
-
-    if (apply && dragging.valid) {
-      meta.mesh.position.copy(finalPos);
-      colorize(meta, "selected");
-    } else if (startPos) {
-      meta.mesh.position.copy(startPos);
+    if (wasPlacing && !shouldApply) {
+      disposeObject(meta.mesh);
+      const idx = objs.findIndex((obj) => obj.id === meta.id);
+      if (idx >= 0) objs.splice(idx, 1);
+      clearSelection();
+    } else {
+      meta.mesh.visible = true;
+      if (shouldApply) {
+        meta.mesh.position.copy(finalPos);
+      } else if (startPos) {
+        meta.mesh.position.copy(startPos);
+      }
       colorize(meta, "selected");
     }
 
@@ -849,6 +883,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     }
 
     dragging.active = false;
+    dragging.placing = undefined;
     dragging.target = undefined;
     dragging.pointerId = undefined;
     dragging.offset = undefined;
@@ -856,10 +891,13 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     dragging.startPos = undefined;
     dragging.valid = undefined;
 
-    rtsControls.setPanInputsEnabled(true);
+    if (!wasPlacing) {
+      rtsControls.setPanInputsEnabled(true);
+    }
     setWarning(null);
 
-    if (apply && startPos && !startPos.equals(meta.mesh.position)) {
+    const moved = startPos ? !startPos.equals(meta.mesh.position) : false;
+    if (shouldApply && (wasPlacing || moved)) {
       notifySelection(meta);
       pushHistory();
     }
@@ -867,6 +905,12 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
 
   function handlePointerDown(ev: PointerEvent) {
     if (mode !== "edit") return;
+    if (dragging.active && dragging.placing) {
+      if (ev.button !== 0) return;
+      if (!dragging.valid) return;
+      endDrag(true);
+      return;
+    }
     if (ev.button !== 0) return;
 
     setMouseFromEvent(ev);
@@ -892,7 +936,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     if (mode !== "edit") return;
 
     if (dragging.active) {
-      renderer.domElement.style.cursor = "grabbing";
+      renderer.domElement.style.cursor = dragging.placing ? "crosshair" : "grabbing";
       updateDrag(ev);
       return;
     }
@@ -916,6 +960,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   function handlePointerUp(ev: PointerEvent) {
     if (mode !== "edit") return;
     if (!dragging.active) return;
+    if (dragging.placing) return;
     endDrag(true);
     renderer.domElement.style.cursor = "default";
   }
@@ -925,6 +970,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     hoveredId = null;
     updateHoverOutline(undefined);
     renderer.domElement.style.cursor = "default";
+    lastPointerClient = null;
   }
 
   function shouldIgnoreKey(event: KeyboardEvent) {
@@ -938,7 +984,17 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   function handleKeyDown(ev: KeyboardEvent) {
     if (shouldIgnoreKey(ev)) return;
 
-    const key = ev.key.toLowerCase();
+    if (ev.code === "AltLeft" || ev.code === "AltRight") {
+      altDown = true;
+      return;
+    }
+
+    if (ev.key === "Escape" && dragging.active && dragging.placing) {
+      ev.preventDefault();
+      endDrag(false);
+      setWarning(null);
+      return;
+    }
 
     if (ev.code === "Space") {
       const meta = selectedId ? objs.find((obj) => obj.id === selectedId) : undefined;
@@ -957,13 +1013,21 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
       return;
     }
 
-    if (key === "q") {
+    if (ev.code === "Comma" || ev.key === ",") {
+      ev.preventDefault();
       rotateSelected("left");
       return;
     }
 
-    if (key === "e") {
+    if (ev.code === "Period" || ev.key === ".") {
+      ev.preventDefault();
       rotateSelected("right");
+    }
+  }
+
+  function handleKeyUp(ev: KeyboardEvent) {
+    if (ev.code === "AltLeft" || ev.code === "AltRight") {
+      altDown = false;
     }
   }
 
@@ -973,6 +1037,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   renderer.domElement.addEventListener("pointerup", handlePointerUp);
   renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
   window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("keyup", handleKeyUp);
 
   const clock = new THREE.Clock();
   let raf = 0;
@@ -980,6 +1045,9 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     raf = requestAnimationFrame(tick);
     const delta = clock.getDelta();
     rtsControls.update(delta);
+    if (dragging.active && dragging.placing && lastPointerClient) {
+      updateDragFromClient(lastPointerClient.x, lastPointerClient.y);
+    }
     updateSelectionOutline();
     renderer.render(scene, camera);
   };
@@ -1036,6 +1104,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     renderer.domElement.removeEventListener("pointerup", handlePointerUp);
     renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
     window.removeEventListener("keydown", handleKeyDown);
+    window.removeEventListener("keyup", handleKeyUp);
 
     disposeObject(grid);
     disposeObject(roomGroup);

@@ -10,9 +10,9 @@ import {
 } from "./venueEngine";
 
 const SPEED_PRESETS = [
-  { label: "Slow", value: 3.2 },
-  { label: "Normal", value: 4.5 },
-  { label: "Fast", value: 6.2 }
+  { label: "Slow", value: 2.6 },
+  { label: "Normal", value: 4.0 },
+  { label: "Fast", value: 5.8 }
 ] as const;
 
 export default function VenueViewer() {
@@ -76,7 +76,13 @@ export default function VenueViewer() {
     engineRef.current?.setPanSpeed(SPEED_PRESETS[speedIndex].value);
   }, [speedIndex]);
 
-  const addObject = (type: PlaceType) => engineRef.current?.addObject(type);
+  const addObject = (type: PlaceType) => {
+    if (mode !== "edit") {
+      setMode("edit");
+      engineRef.current?.setMode("edit");
+    }
+    engineRef.current?.addObject(type);
+  };
   const rotateLeft = () => engineRef.current?.rotateSelected("left");
   const rotateRight = () => engineRef.current?.rotateSelected("right");
   const deleteSelected = () => engineRef.current?.deleteSelected();

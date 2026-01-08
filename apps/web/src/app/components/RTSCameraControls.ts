@@ -13,10 +13,11 @@ type RTSCameraOptions = {
   bounds: Bounds;
   target?: THREE.Vector3;
   yaw?: number;
-  pitch?: number;
   distance?: number;
   minDistance?: number;
   maxDistance?: number;
+  minPitch?: number;
+  maxPitch?: number;
   edgeMarginPx?: number;
   panSpeed?: number;
   zoomSpeed?: number;
@@ -38,16 +39,16 @@ type KeyState = {
   backward: boolean;
   left: boolean;
   right: boolean;
-  rotateLeft: boolean;
-  rotateRight: boolean;
 };
 
 const PAN_ACCEL = 20;
 const PAN_FRICTION = 16;
+const PAN_ZOOM_MIN = 0.7;
+const PAN_ZOOM_MAX = 1.6;
 const ZOOM_FRICTION = 14;
 const ROTATE_DAMPING = 12;
-const ROTATE_KEY_SPEED = 1.6;
 const ROTATE_DRAG_SPEED = 0.005;
+const PITCH_DAMPING = 8;
 const FOCUS_DAMPING = 6;
 
 export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHandle {
@@ -56,10 +57,13 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
 
   let yaw = options.yaw ?? THREE.MathUtils.degToRad(40);
   let targetYaw = yaw;
-  let pitch = options.pitch ?? THREE.MathUtils.degToRad(55);
   let distance = options.distance ?? 18;
   const minDistance = options.minDistance ?? 6;
   const maxDistance = options.maxDistance ?? 32;
+  const minPitch = options.minPitch ?? THREE.MathUtils.degToRad(32);
+  const maxPitch = options.maxPitch ?? THREE.MathUtils.degToRad(65);
+  const initialZoomT = THREE.MathUtils.clamp((distance - minDistance) / (maxDistance - minDistance), 0, 1);
+  let pitch = THREE.MathUtils.lerp(minPitch, maxPitch, initialZoomT);
   const edgeMargin = options.edgeMarginPx ?? 28;
   const padding = options.padding ?? 0.6;
 
@@ -76,9 +80,7 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
     forward: false,
     backward: false,
     left: false,
-    right: false,
-    rotateLeft: false,
-    rotateRight: false
+    right: false
   };
 
   let pointerInside = false;
@@ -135,6 +137,8 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   const onPointerLeave = () => {
     pointerInside = false;
     pointerPos = null;
+    isRightDown = false;
+    isMiddleDown = false;
   };
 
   const onPointerMove = (event: PointerEvent) => {
@@ -205,8 +209,8 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
 
   const onWheel = (event: WheelEvent) => {
     event.preventDefault();
-    zoomVelocity += event.deltaY * 0.002 * zoomSpeed;
-    zoomVelocity = THREE.MathUtils.clamp(zoomVelocity, -20, 20);
+    zoomVelocity += event.deltaY * 0.0015 * zoomSpeed;
+    zoomVelocity = THREE.MathUtils.clamp(zoomVelocity, -12, 12);
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -214,24 +218,30 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
 
     switch (event.code) {
       case "KeyW":
+      case "ArrowUp":
         keyState.forward = true;
         break;
       case "KeyS":
+      case "ArrowDown":
         keyState.backward = true;
         break;
       case "KeyA":
+      case "ArrowLeft":
         keyState.left = true;
         break;
       case "KeyD":
+      case "ArrowRight":
         keyState.right = true;
         break;
       case "KeyQ":
-        if (!enableRotate) return;
-        keyState.rotateLeft = true;
+        if (!enableRotate || !panInputsEnabled) return;
+        if (event.repeat) return;
+        targetYaw += Math.PI / 2;
         break;
       case "KeyE":
-        if (!enableRotate) return;
-        keyState.rotateRight = true;
+        if (!enableRotate || !panInputsEnabled) return;
+        if (event.repeat) return;
+        targetYaw -= Math.PI / 2;
         break;
       default:
         return;
@@ -245,24 +255,20 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
 
     switch (event.code) {
       case "KeyW":
+      case "ArrowUp":
         keyState.forward = false;
         break;
       case "KeyS":
+      case "ArrowDown":
         keyState.backward = false;
         break;
       case "KeyA":
+      case "ArrowLeft":
         keyState.left = false;
         break;
       case "KeyD":
+      case "ArrowRight":
         keyState.right = false;
-        break;
-      case "KeyQ":
-        if (!enableRotate) return;
-        keyState.rotateLeft = false;
-        break;
-      case "KeyE":
-        if (!enableRotate) return;
-        keyState.rotateRight = false;
         break;
       default:
         return;
@@ -305,14 +311,11 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
       clampTarget();
     }
 
-    if (enableRotate && panInputsEnabled) {
-      const rotationInput = (keyState.rotateRight ? 1 : 0) - (keyState.rotateLeft ? 1 : 0);
-      if (rotationInput !== 0) {
-        targetYaw += rotationInput * ROTATE_KEY_SPEED * dt;
-      }
-    }
-
     yaw = THREE.MathUtils.damp(yaw, targetYaw, ROTATE_DAMPING, dt);
+    const zoomT = THREE.MathUtils.clamp((distance - minDistance) / (maxDistance - minDistance), 0, 1);
+    const pitchTarget = THREE.MathUtils.lerp(minPitch, maxPitch, zoomT);
+    const speedScale = THREE.MathUtils.lerp(PAN_ZOOM_MIN, PAN_ZOOM_MAX, zoomT);
+    pitch = THREE.MathUtils.damp(pitch, pitchTarget, PITCH_DAMPING, dt);
 
     const canPan = panInputsEnabled && !isMiddleDown && !isRightDown;
     let inputX = 0;
@@ -340,7 +343,7 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
       const desired = new THREE.Vector3();
       desired.addScaledVector(right, inputVec.x);
       desired.addScaledVector(forward, -inputVec.z);
-      desired.multiplyScalar(panSpeed);
+      desired.multiplyScalar(panSpeed * speedScale);
 
       panVelocity.x = THREE.MathUtils.damp(panVelocity.x, desired.x, PAN_ACCEL, dt);
       panVelocity.z = THREE.MathUtils.damp(panVelocity.z, desired.z, PAN_ACCEL, dt);
@@ -354,7 +357,8 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
     clampTarget();
 
     if (Math.abs(zoomVelocity) > 0.0001) {
-      distance += zoomVelocity * dt;
+      const zoomFactor = Math.exp(zoomVelocity * dt);
+      distance *= zoomFactor;
       zoomVelocity = THREE.MathUtils.damp(zoomVelocity, 0, ZOOM_FRICTION, dt);
     }
 
@@ -379,8 +383,6 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   const setEnableRotate = (enabled: boolean) => {
     enableRotate = enabled;
     if (!enabled) {
-      keyState.rotateLeft = false;
-      keyState.rotateRight = false;
       targetYaw = yaw;
       isRightDown = false;
     }
