@@ -329,12 +329,14 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     domElement: renderer.domElement,
     bounds: ROOM_BOUNDS,
     panSpeed: options.panSpeed,
-    yaw: THREE.MathUtils.degToRad(35),
-    pitch: THREE.MathUtils.degToRad(58),
-    distance: 18,
-    minDistance: 7,
-    maxDistance: 30,
-    edgeMarginPx: 26,
+    yaw: THREE.MathUtils.degToRad(45),
+    pitch: THREE.MathUtils.degToRad(50),
+    distance: 20,
+    minDistance: 8,
+    maxDistance: 34,
+    edgeMarginPx: 34,
+    zoomSpeed: 9,
+    enableRotate: true,
     padding: 0.8
   });
   rtsControls.update(0);

@@ -42,11 +42,12 @@ type KeyState = {
   rotateRight: boolean;
 };
 
-const PAN_ACCEL = 14;
-const PAN_FRICTION = 10;
-const ZOOM_FRICTION = 10;
-const ROTATE_FRICTION = 10;
-const ROTATE_SPEED = 1.8;
+const PAN_ACCEL = 20;
+const PAN_FRICTION = 16;
+const ZOOM_FRICTION = 14;
+const ROTATE_DAMPING = 12;
+const ROTATE_KEY_SPEED = 1.6;
+const ROTATE_DRAG_SPEED = 0.005;
 const FOCUS_DAMPING = 6;
 
 export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHandle {
@@ -54,6 +55,7 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   const target = options.target ? options.target.clone() : new THREE.Vector3(0, 0, 0);
 
   let yaw = options.yaw ?? THREE.MathUtils.degToRad(40);
+  let targetYaw = yaw;
   let pitch = options.pitch ?? THREE.MathUtils.degToRad(55);
   let distance = options.distance ?? 18;
   const minDistance = options.minDistance ?? 6;
@@ -68,7 +70,6 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
 
   const panVelocity = new THREE.Vector3();
   let zoomVelocity = 0;
-  let yawVelocity = 0;
   let focusTarget: THREE.Vector3 | null = null;
 
   const keyState: KeyState = {
@@ -86,6 +87,8 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   const raycaster = new THREE.Raycaster();
   const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   let isMiddleDown = false;
+  let isRightDown = false;
+  let lastPointerX = 0;
   let dragOrigin: THREE.Vector3 | null = null;
   let dragStartTarget: THREE.Vector3 | null = null;
 
@@ -140,6 +143,13 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
       pointerPos = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     }
 
+    if (isRightDown && enableRotate && panInputsEnabled) {
+      const movementX = event.movementX || event.clientX - lastPointerX;
+      lastPointerX = event.clientX;
+      targetYaw -= movementX * ROTATE_DRAG_SPEED;
+      focusTarget = null;
+    }
+
     if (!isMiddleDown) return;
 
     const hit = getPlaneIntersection(event);
@@ -153,23 +163,44 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   };
 
   const onPointerDown = (event: PointerEvent) => {
-    if (event.button !== 1) return;
+    if (event.button === 1) {
+      const hit = getPlaneIntersection(event);
+      if (!hit) return;
 
-    const hit = getPlaneIntersection(event);
-    if (!hit) return;
+      isMiddleDown = true;
+      dragOrigin = hit;
+      dragStartTarget = target.clone();
+      domElement.setPointerCapture?.(event.pointerId);
+      return;
+    }
 
-    isMiddleDown = true;
-    dragOrigin = hit;
-    dragStartTarget = target.clone();
-    domElement.setPointerCapture?.(event.pointerId);
+    if (event.button === 2 && enableRotate && panInputsEnabled) {
+      isRightDown = true;
+      lastPointerX = event.clientX;
+      domElement.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    }
   };
 
   const onPointerUp = (event: PointerEvent) => {
-    if (event.button !== 1) return;
-    isMiddleDown = false;
-    dragOrigin = null;
-    dragStartTarget = null;
-    domElement.releasePointerCapture?.(event.pointerId);
+    if (event.button === 1) {
+      isMiddleDown = false;
+      dragOrigin = null;
+      dragStartTarget = null;
+      domElement.releasePointerCapture?.(event.pointerId);
+      return;
+    }
+
+    if (event.button === 2) {
+      isRightDown = false;
+      domElement.releasePointerCapture?.(event.pointerId);
+    }
+  };
+
+  const onContextMenu = (event: MouseEvent) => {
+    if (enableRotate) {
+      event.preventDefault();
+    }
   };
 
   const onWheel = (event: WheelEvent) => {
@@ -245,6 +276,7 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   domElement.addEventListener("pointermove", onPointerMove);
   domElement.addEventListener("pointerdown", onPointerDown);
   domElement.addEventListener("pointerup", onPointerUp);
+  domElement.addEventListener("contextmenu", onContextMenu);
   domElement.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
@@ -273,17 +305,16 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
       clampTarget();
     }
 
-    if (enableRotate) {
+    if (enableRotate && panInputsEnabled) {
       const rotationInput = (keyState.rotateRight ? 1 : 0) - (keyState.rotateLeft ? 1 : 0);
       if (rotationInput !== 0) {
-        yawVelocity = THREE.MathUtils.damp(yawVelocity, rotationInput * ROTATE_SPEED, ROTATE_FRICTION, dt);
-      } else {
-        yawVelocity = THREE.MathUtils.damp(yawVelocity, 0, ROTATE_FRICTION, dt);
+        targetYaw += rotationInput * ROTATE_KEY_SPEED * dt;
       }
-      yaw += yawVelocity * dt;
     }
 
-    const canPan = panInputsEnabled && !isMiddleDown;
+    yaw = THREE.MathUtils.damp(yaw, targetYaw, ROTATE_DAMPING, dt);
+
+    const canPan = panInputsEnabled && !isMiddleDown && !isRightDown;
     let inputX = 0;
     let inputZ = 0;
 
@@ -340,6 +371,8 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
     panInputsEnabled = enabled;
     if (!enabled) {
       panVelocity.set(0, 0, 0);
+      isRightDown = false;
+      isMiddleDown = false;
     }
   };
 
@@ -348,7 +381,8 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
     if (!enabled) {
       keyState.rotateLeft = false;
       keyState.rotateRight = false;
-      yawVelocity = 0;
+      targetYaw = yaw;
+      isRightDown = false;
     }
   };
 
@@ -363,6 +397,7 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
     domElement.removeEventListener("pointermove", onPointerMove);
     domElement.removeEventListener("pointerdown", onPointerDown);
     domElement.removeEventListener("pointerup", onPointerUp);
+    domElement.removeEventListener("contextmenu", onContextMenu);
     domElement.removeEventListener("wheel", onWheel);
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
