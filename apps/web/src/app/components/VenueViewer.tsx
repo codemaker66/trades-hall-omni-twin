@@ -1,1110 +1,271 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { createFpsController } from "./FpsController";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  createVenueEngine,
+  type EngineMode,
+  type HistoryState,
+  type PlaceType,
+  type SelectedInfo
+} from "./venueEngine";
 
-type PlaceType = "table" | "chair" | "stage";
-
-type Footprint =
-  | {
-      kind: "circle";
-      radius: number;
-    }
-  | {
-      kind: "rect";
-      width: number;
-      depth: number;
-    };
-
-type ObjMeta = {
-  id: string;
-  type: PlaceType;
-  footprint: Footprint;
-  mesh: THREE.Object3D;
-  baseColor: THREE.Color;
-};
-
-type CircleShape = {
-  kind: "circle";
-  x: number;
-  z: number;
-  radius: number;
-};
-
-type RectShape = {
-  kind: "rect";
-  x: number;
-  z: number;
-  width: number;
-  depth: number;
-  rotDeg: number;
-};
-
-type Shape2D = CircleShape | RectShape;
-
-type Point2D = {
-  x: number;
-  z: number;
-};
-
-const ROOM_WIDTH_X = 10;
-const ROOM_LENGTH_Z = 21;
-const ROOM_HEIGHT_Y = 7;
-const ROOM_BOUNDS = {
-  minX: -ROOM_WIDTH_X / 2,
-  maxX: ROOM_WIDTH_X / 2,
-  minZ: -ROOM_LENGTH_Z / 2,
-  maxZ: ROOM_LENGTH_Z / 2
-};
-
-const GRID_SNAP = 0.25;
-const ROTATE_SNAP_DEG = 15;
-const ROTATE_FREE_DEG = 5;
-const STAGE_HEIGHT = 0.4;
-const STAGE_WIDTH = 3.2;
-const STAGE_DEPTH = 2.2;
-const FPS_EYE_HEIGHT = 1.7;
 const SPEED_PRESETS = [
   { label: "Slow", value: 3.2 },
   { label: "Normal", value: 4.5 },
   { label: "Fast", value: 6.2 }
 ] as const;
 
-function uid(prefix = "obj") {
-  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
-}
-
 export default function VenueViewer() {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const engineRef = useRef<ReturnType<typeof createVenueEngine> | null>(null);
 
-  const [zonesOn, setZonesOn] = useState(true);
-  const [measureOn, setMeasureOn] = useState(false);
-  const [measureText, setMeasureText] = useState<string>("(measurement off)");
-  const [snapOn, setSnapOn] = useState(false);
-  const [walkMode, setWalkMode] = useState(false);
+  const [mode, setMode] = useState<EngineMode>("edit");
+  const [snapOn, setSnapOn] = useState(true);
+  const [gridOn, setGridOn] = useState(true);
   const [fov, setFov] = useState(90);
   const [speedIndex, setSpeedIndex] = useState(1);
-  const [gridOn, setGridOn] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedLabel, setSelectedLabel] = useState<string>("(none)");
-  const [hint, setHint] = useState<string>(
-    "Tip: Add an object, click it, drag it. Q/E rotates, Delete removes. Use Mode toggle to switch Walk/Edit."
-  );
-
-  // We keep these refs so Three state survives React re-renders.
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
-  const fpsControllerRef = useRef<ReturnType<typeof createFpsController> | null>(null);
-  const selectedIdRef = useRef<string | null>(null);
-  const snapOnRef = useRef(false);
-  const walkModeRef = useRef(false);
-
-  const raycaster = useMemo(() => new THREE.Raycaster(), []);
-  const mouseNdc = useMemo(() => new THREE.Vector2(), []);
-  const floorPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
-
-  const objsRef = useRef<ObjMeta[]>([]);
-  const zonesGroupRef = useRef<THREE.Group | null>(null);
-  const gridRef = useRef<THREE.LineSegments | null>(null);
-
-  // dragging state
-  const draggingRef = useRef<{
-    active: boolean;
-    target?: ObjMeta;
-    lastGoodPos?: THREE.Vector3;
-    dragOffset?: THREE.Vector3;
-    pointerId?: number;
-  }>({ active: false });
-
-  // measurement state
-  const measureRef = useRef<{
-    a?: THREE.Vector3;
-    b?: THREE.Vector3;
-    line?: THREE.Line;
-    dotA?: THREE.Mesh;
-    dotB?: THREE.Mesh;
-  }>({});
-
-  useEffect(() => {
-    snapOnRef.current = snapOn;
-  }, [snapOn]);
-
-  useEffect(() => {
-    walkModeRef.current = walkMode;
-    fpsControllerRef.current?.setEnabled(walkMode);
-    if (controlsRef.current) {
-      controlsRef.current.enabled = !walkMode && !draggingRef.current.active;
-      controlsRef.current.update();
-    }
-    if (walkMode && cameraRef.current) {
-      if (rendererRef.current && draggingRef.current.pointerId !== undefined) {
-        rendererRef.current.domElement.releasePointerCapture(draggingRef.current.pointerId);
-      }
-      draggingRef.current = { active: false };
-    }
-  }, [walkMode]);
-
-  const rotationStep = snapOn ? ROTATE_SNAP_DEG : ROTATE_FREE_DEG;
-
-  function getHostSize() {
-    const el = hostRef.current;
-    if (!el) return { w: 800, h: 600 };
-    const r = el.getBoundingClientRect();
-    return { w: Math.max(300, r.width), h: Math.max(300, r.height) };
-  }
-
-  function setMouseFromEvent(ev: PointerEvent, dom: HTMLElement) {
-    const rect = dom.getBoundingClientRect();
-    const x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-    const y = -(((ev.clientY - rect.top) / rect.height) * 2 - 1);
-    mouseNdc.set(x, y);
-  }
-
-  function intersectFloor(camera: THREE.Camera) {
-    const hit = new THREE.Vector3();
-    raycaster.setFromCamera(mouseNdc, camera);
-    raycaster.ray.intersectPlane(floorPlane, hit);
-    return hit;
-  }
-
-  function intersectObjects(camera: THREE.Camera, root: THREE.Object3D) {
-    raycaster.setFromCamera(mouseNdc, camera);
-    const hits = raycaster.intersectObjects(root.children, true);
-    return hits;
-  }
-
-  function getRotationDeg(meta: ObjMeta) {
-    return THREE.MathUtils.radToDeg(meta.mesh.rotation.y);
-  }
-
-  function getRotationStep() {
-    return snapOnRef.current ? ROTATE_SNAP_DEG : ROTATE_FREE_DEG;
-  }
-
-  function snapValue(value: number, step: number) {
-    return Math.round(value / step) * step;
-  }
-
-  function applySnapPosition(pos: THREE.Vector3) {
-    if (!snapOnRef.current) return;
-    pos.x = snapValue(pos.x, GRID_SNAP);
-    pos.z = snapValue(pos.z, GRID_SNAP);
-  }
-
-  function toShape(meta: ObjMeta, pos: THREE.Vector3, rotDeg?: number): Shape2D {
-    if (meta.footprint.kind === "circle") {
-      return {
-        kind: "circle",
-        x: pos.x,
-        z: pos.z,
-        radius: meta.footprint.radius
-      };
-    }
-
-    return {
-      kind: "rect",
-      x: pos.x,
-      z: pos.z,
-      width: meta.footprint.width,
-      depth: meta.footprint.depth,
-      rotDeg: rotDeg ?? getRotationDeg(meta)
-    };
-  }
-
-  function isInsideRoom(x: number, z: number) {
-    return x >= ROOM_BOUNDS.minX && x <= ROOM_BOUNDS.maxX && z >= ROOM_BOUNDS.minZ && z <= ROOM_BOUNDS.maxZ;
-  }
-
-  function shapeInsideRoom(shape: Shape2D) {
-    if (shape.kind === "circle") {
-      return (
-        shape.x - shape.radius >= ROOM_BOUNDS.minX &&
-        shape.x + shape.radius <= ROOM_BOUNDS.maxX &&
-        shape.z - shape.radius >= ROOM_BOUNDS.minZ &&
-        shape.z + shape.radius <= ROOM_BOUNDS.maxZ
-      );
-    }
-
-    return getRectPoints(shape).every((point) => isInsideRoom(point.x, point.z));
-  }
-
-  function shapeOverlap(a: Shape2D, b: Shape2D): boolean {
-    if (a.kind === "circle" && b.kind === "circle") {
-      return circleCircleOverlap(a, b);
-    }
-
-    if (a.kind === "rect" && b.kind === "rect") {
-      return rectRectOverlap(a, b);
-    }
-
-    const rect = a.kind === "rect" ? a : b;
-    const circle = a.kind === "circle" ? a : b;
-    return rectCircleOverlap(rect, circle);
-  }
-
-  function circleCircleOverlap(a: CircleShape, b: CircleShape): boolean {
-    const dx = a.x - b.x;
-    const dz = a.z - b.z;
-    const radius = a.radius + b.radius;
-    return dx * dx + dz * dz < radius * radius;
-  }
-
-  function rectRectOverlap(a: RectShape, b: RectShape): boolean {
-    const aPoints = getRectPoints(a);
-    const bPoints = getRectPoints(b);
-    const axes = [...getRectAxes(a), ...getRectAxes(b)];
-
-    for (const axis of axes) {
-      const aProjection = projectPoints(aPoints, axis);
-      const bProjection = projectPoints(bPoints, axis);
-      if (!rangesOverlap(aProjection, bProjection)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  function rectCircleOverlap(rect: RectShape, circle: CircleShape): boolean {
-    const rotation = degreesToRadians(-rect.rotDeg);
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-
-    const dx = circle.x - rect.x;
-    const dz = circle.z - rect.z;
-    const localX = dx * cos - dz * sin;
-    const localZ = dx * sin + dz * cos;
-
-    const halfWidth = rect.width / 2;
-    const halfDepth = rect.depth / 2;
-
-    const closestX = clamp(localX, -halfWidth, halfWidth);
-    const closestZ = clamp(localZ, -halfDepth, halfDepth);
-
-    const deltaX = localX - closestX;
-    const deltaZ = localZ - closestZ;
-
-    return deltaX * deltaX + deltaZ * deltaZ < circle.radius * circle.radius;
-  }
-
-  function getRectAxes(rect: RectShape): Point2D[] {
-    const rotation = degreesToRadians(rect.rotDeg);
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-
-    return [
-      { x: cos, z: sin },
-      { x: -sin, z: cos }
-    ];
-  }
-
-  function getRectPoints(rect: RectShape): Point2D[] {
-    const halfWidth = rect.width / 2;
-    const halfDepth = rect.depth / 2;
-    const rotation = degreesToRadians(rect.rotDeg);
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-
-    const localPoints = [
-      { x: -halfWidth, z: -halfDepth },
-      { x: halfWidth, z: -halfDepth },
-      { x: halfWidth, z: halfDepth },
-      { x: -halfWidth, z: halfDepth }
-    ];
-
-    return localPoints.map((point) => ({
-      x: rect.x + point.x * cos - point.z * sin,
-      z: rect.z + point.x * sin + point.z * cos
-    }));
-  }
-
-  function projectPoints(points: Point2D[], axis: Point2D): { min: number; max: number } {
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-
-    for (const point of points) {
-      const projection = point.x * axis.x + point.z * axis.z;
-      min = Math.min(min, projection);
-      max = Math.max(max, projection);
-    }
-
-    return { min, max };
-  }
-
-  function rangesOverlap(a: { min: number; max: number }, b: { min: number; max: number }): boolean {
-    return a.min < b.max && b.min < a.max;
-  }
-
-  function clamp(value: number, min: number, max: number): number {
-    return Math.min(Math.max(value, min), max);
-  }
-
-  function degreesToRadians(value: number): number {
-    return (value * Math.PI) / 180;
-  }
-
-  function isValidPlacement(candidate: ObjMeta, pos: THREE.Vector3, rotDeg?: number) {
-    const candidateShape = toShape(candidate, pos, rotDeg);
-
-    if (!shapeInsideRoom(candidateShape)) {
-      return false;
-    }
-
-    for (const other of objsRef.current) {
-      if (other.id === candidate.id) continue;
-      if (candidate.type === "stage" && other.type === "stage") continue;
-
-      const otherShape = toShape(other, other.mesh.position);
-      if (shapeOverlap(candidateShape, otherShape)) return false;
-    }
-
-    return true;
-  }
-
-  function getStageStackY(meta: ObjMeta, pos: THREE.Vector3, rotDeg: number) {
-    if (meta.type !== "stage") {
-      return meta.mesh.position.y;
-    }
-
-    const candidateShape = toShape(meta, pos, rotDeg);
-    let highestTop = 0;
-
-    for (const other of objsRef.current) {
-      if (other.id === meta.id || other.type !== "stage") continue;
-      const otherShape = toShape(other, other.mesh.position);
-      if (!shapeOverlap(candidateShape, otherShape)) continue;
-
-      const otherTop = other.mesh.position.y + STAGE_HEIGHT / 2;
-      highestTop = Math.max(highestTop, otherTop);
-    }
-
-    return highestTop + STAGE_HEIGHT / 2;
-  }
-
-  function colorize(meta: ObjMeta, mode: "base" | "bad" | "selected") {
-    meta.mesh.traverse((o) => {
-      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
-      if (!m) return;
-      if (mode === "base") m.color.copy(meta.baseColor);
-      if (mode === "bad") m.color.setRGB(1, 0.25, 0.25);
-      if (mode === "selected") m.color.setRGB(0.35, 0.8, 1);
-    });
-  }
-
-  function select(meta?: ObjMeta) {
-    // clear previous selection highlight
-    for (const o of objsRef.current) colorize(o, "base");
-    if (meta) {
-      colorize(meta, "selected");
-      selectedIdRef.current = meta.id;
-      setSelectedId(meta.id);
-      setSelectedLabel(`${meta.type} (${meta.id})`);
-    } else {
-      selectedIdRef.current = null;
-      setSelectedId(null);
-      setSelectedLabel("(none)");
-    }
-  }
-
-  function getSelectedMeta() {
-    const id = selectedIdRef.current;
-    if (!id) return undefined;
-    return objsRef.current.find((obj) => obj.id === id);
-  }
-
-  function rotateSelected(deltaDeg: number) {
-    const meta = getSelectedMeta();
-    if (!meta) return;
-
-    const currentDeg = getRotationDeg(meta);
-    const baseDeg = snapOnRef.current ? snapValue(currentDeg, ROTATE_SNAP_DEG) : currentDeg;
-    const nextDeg = baseDeg + deltaDeg;
-    const finalDeg = snapOnRef.current ? snapValue(nextDeg, ROTATE_SNAP_DEG) : nextDeg;
-
-    meta.mesh.rotation.y = THREE.MathUtils.degToRad(finalDeg);
-    if (meta.type === "stage") {
-      meta.mesh.position.y = getStageStackY(meta, meta.mesh.position, finalDeg);
-    }
-    const ok = isValidPlacement(meta, meta.mesh.position, finalDeg);
-    colorize(meta, ok ? "selected" : "bad");
-  }
-
-  function deleteSelected() {
-    const scene = sceneRef.current;
-    const meta = getSelectedMeta();
-    if (!scene || !meta) return;
-
-    scene.remove(meta.mesh);
-    meta.mesh.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      mesh.geometry?.dispose?.();
-      const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
-      if (Array.isArray(material)) {
-        material.forEach((mat) => mat.dispose?.());
-      } else {
-        material?.dispose?.();
-      }
-    });
-
-    objsRef.current = objsRef.current.filter((obj) => obj.id !== meta.id);
-    if (rendererRef.current && draggingRef.current.pointerId !== undefined) {
-      rendererRef.current.domElement.releasePointerCapture(draggingRef.current.pointerId);
-    }
-    draggingRef.current = { active: false };
-    if (controlsRef.current) {
-      controlsRef.current.enabled = !walkModeRef.current;
-      controlsRef.current.update();
-    }
-    select(undefined);
-  }
-
-  function addObject(type: PlaceType) {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    const id = uid(type);
-
-    let mesh: THREE.Object3D;
-    let footprint: Footprint = { kind: "circle", radius: 0.6 };
-    let baseColor = new THREE.Color(0.85, 0.85, 0.9);
-
-    if (type === "table") {
-      footprint = { kind: "circle", radius: 0.6 };
-      baseColor = new THREE.Color(0.85, 0.78, 0.6);
-      const geom = new THREE.CylinderGeometry(0.6, 0.6, 0.75, 24);
-      const mat = new THREE.MeshStandardMaterial({ color: baseColor });
-      const m = new THREE.Mesh(geom, mat);
-      m.position.y = 0.375;
-      mesh = m;
-    } else if (type === "chair") {
-      footprint = { kind: "circle", radius: 0.35 };
-      baseColor = new THREE.Color(0.6, 0.75, 0.9);
-      const geom = new THREE.BoxGeometry(0.45, 0.9, 0.45);
-      const mat = new THREE.MeshStandardMaterial({ color: baseColor });
-      const m = new THREE.Mesh(geom, mat);
-      m.position.y = 0.45;
-      mesh = m;
-    } else {
-      // stage
-      footprint = { kind: "rect", width: STAGE_WIDTH, depth: STAGE_DEPTH };
-      baseColor = new THREE.Color(0.65, 0.6, 0.75);
-      const geom = new THREE.BoxGeometry(STAGE_WIDTH, STAGE_HEIGHT, STAGE_DEPTH);
-      const mat = new THREE.MeshStandardMaterial({ color: baseColor });
-      const m = new THREE.Mesh(geom, mat);
-      m.position.y = STAGE_HEIGHT / 2;
-      mesh = m;
-    }
-
-    mesh.position.set(0, mesh.position.y, 0);
-
-    const meta: ObjMeta = { id, type, footprint, mesh, baseColor };
-
-    // Place at a safe starting spot
-    const start = new THREE.Vector3(ROOM_BOUNDS.minX + 1.5, mesh.position.y, ROOM_BOUNDS.minZ + 1.5);
-    if (meta.type === "stage") {
-      start.y = getStageStackY(meta, start, 0);
-    }
-    if (isValidPlacement(meta, start)) {
-      mesh.position.set(start.x, start.y, start.z);
-    }
-
-    objsRef.current.push(meta);
-    scene.add(mesh);
-
-    select(meta);
-    setHint(
-      "Drag to move. Q/E rotates selected. Delete removes. Snap toggles grid. Use Mode toggle for Walk/Edit. Red = invalid placement."
-    );
-  }
-
-  function buildGrid(width: number, length: number, step: number) {
-    const points: number[] = [];
-    const halfW = width / 2;
-    const halfL = length / 2;
-    const y = 0.01;
-
-    for (let x = -halfW; x <= halfW + 0.001; x += step) {
-      points.push(x, y, -halfL, x, y, halfL);
-    }
-
-    for (let z = -halfL; z <= halfL + 0.001; z += step) {
-      points.push(-halfW, y, z, halfW, y, z);
-    }
-
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
-    const mat = new THREE.LineBasicMaterial({ color: 0x8a96a3, transparent: true, opacity: 0.4 });
-    return new THREE.LineSegments(geom, mat);
-  }
-
-  function rebuildZones() {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    // Remove old zones
-    if (zonesGroupRef.current) {
-      scene.remove(zonesGroupRef.current);
-      zonesGroupRef.current.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose?.();
-        const mat = mesh.material as THREE.Material;
-        mat?.dispose?.();
-      });
-    }
-
-    const g = new THREE.Group();
-
-    // Example zones (rectangles) placeholder for future polygon editor
-    // "usable area" + "keep-out" as translucent overlays
-    const zoneMatUsable = new THREE.MeshBasicMaterial({ color: 0x33ff99, transparent: true, opacity: 0.12, depthWrite: false });
-    const zoneMatKeepout = new THREE.MeshBasicMaterial({ color: 0xff3366, transparent: true, opacity: 0.18, depthWrite: false });
-
-    // Usable: big rectangle
-    const usable = new THREE.PlaneGeometry(ROOM_WIDTH_X, ROOM_LENGTH_Z);
-    const usableMesh = new THREE.Mesh(usable, zoneMatUsable);
-    usableMesh.rotation.x = -Math.PI / 2;
-    usableMesh.position.y = 0.011;
-    g.add(usableMesh);
-
-    // Keep-out: small rectangle near "top"
-    const keepout = new THREE.PlaneGeometry(3, 2);
-    const keepoutMesh = new THREE.Mesh(keepout, zoneMatKeepout);
-    keepoutMesh.rotation.x = -Math.PI / 2;
-    keepoutMesh.position.set(2.5, 0.012, 6);
-    g.add(keepoutMesh);
-
-    zonesGroupRef.current = g;
-    scene.add(g);
-  }
-
-  function clearMeasurement() {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    const m = measureRef.current;
-    if (m.line) scene.remove(m.line);
-    if (m.dotA) scene.remove(m.dotA);
-    if (m.dotB) scene.remove(m.dotB);
-    measureRef.current = {};
-    setMeasureText("(measurement off)");
-  }
-
-  function setMeasurementPoint(pt: THREE.Vector3) {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    const m = measureRef.current;
-
-    const dotGeom = new THREE.SphereGeometry(0.08, 16, 16);
-    const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
-    if (!m.a) {
-      m.a = pt.clone();
-      m.dotA = new THREE.Mesh(dotGeom, dotMat);
-      m.dotA.position.copy(m.a);
-      scene.add(m.dotA);
-      setMeasureText("Point A set. Click Point B.");
-      return;
-    }
-
-    // set B
-    m.b = pt.clone();
-    m.dotB = new THREE.Mesh(dotGeom, dotMat);
-    m.dotB.position.copy(m.b);
-    scene.add(m.dotB);
-
-    // line
-    const lineGeom = new THREE.BufferGeometry().setFromPoints([m.a, m.b]);
-    const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff });
-    m.line = new THREE.Line(lineGeom, lineMat);
-    scene.add(m.line);
-
-    const dist = m.a.distanceTo(m.b);
-    setMeasureText(`Distance: ${dist.toFixed(2)}m (click to start a new measure)`);
-
-    // next click restarts measurement
-    m.a = undefined;
-    m.b = undefined;
-  }
+  const [selected, setSelected] = useState<SelectedInfo | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [historyState, setHistoryState] = useState<HistoryState>({ canUndo: false, canRedo: false });
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    // --- init three ---
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xdfe6ef);
-
-    const { w, h } = getHostSize();
-
-    const camera = new THREE.PerspectiveCamera(90, w / h, 0.1, 200);
-    camera.position.set(0, 4.5, 9);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(w, h);
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    host.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.minDistance = 2;
-    controls.maxDistance = 30;
-    controls.target.set(0, 0.8, 0);
-    controls.update();
-
-
-    // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
-    scene.add(ambient);
-
-    const hemi = new THREE.HemisphereLight(0xe7f2ff, 0xaab3bd, 0.75);
-    scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 1.1);
-    dir.position.set(10, 14, 8);
-    scene.add(dir);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.35);
-    fill.position.set(-8, 6, -6);
-    scene.add(fill);
-
-    // Floor
-    const floorGeom = new THREE.PlaneGeometry(ROOM_WIDTH_X, ROOM_LENGTH_Z);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xcdd4db, metalness: 0.0, roughness: 0.92 });
-    const floor = new THREE.Mesh(floorGeom, floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0;
-    scene.add(floor);
-
-    // Grid (1m)
-    const grid = buildGrid(ROOM_WIDTH_X, ROOM_LENGTH_Z, 1);
-    grid.visible = gridOn;
-    gridRef.current = grid;
-    scene.add(grid);
-
-    // Walls
-    const wallThickness = 0.12;
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0xe6eaee, metalness: 0.0, roughness: 0.9 });
-    const wallLeft = new THREE.Mesh(
-      new THREE.BoxGeometry(wallThickness, ROOM_HEIGHT_Y, ROOM_LENGTH_Z + wallThickness * 2),
-      wallMat
-    );
-    wallLeft.position.set(ROOM_BOUNDS.minX - wallThickness / 2, ROOM_HEIGHT_Y / 2, 0);
-    scene.add(wallLeft);
-
-    const wallRight = new THREE.Mesh(
-      new THREE.BoxGeometry(wallThickness, ROOM_HEIGHT_Y, ROOM_LENGTH_Z + wallThickness * 2),
-      wallMat
-    );
-    wallRight.position.set(ROOM_BOUNDS.maxX + wallThickness / 2, ROOM_HEIGHT_Y / 2, 0);
-    scene.add(wallRight);
-
-    const wallFront = new THREE.Mesh(
-      new THREE.BoxGeometry(ROOM_WIDTH_X + wallThickness * 2, ROOM_HEIGHT_Y, wallThickness),
-      wallMat
-    );
-    wallFront.position.set(0, ROOM_HEIGHT_Y / 2, ROOM_BOUNDS.minZ - wallThickness / 2);
-    scene.add(wallFront);
-
-    const wallBack = new THREE.Mesh(
-      new THREE.BoxGeometry(ROOM_WIDTH_X + wallThickness * 2, ROOM_HEIGHT_Y, wallThickness),
-      wallMat
-    );
-    wallBack.position.set(0, ROOM_HEIGHT_Y / 2, ROOM_BOUNDS.maxZ + wallThickness / 2);
-    scene.add(wallBack);
-
-    // simple pillars (visual-only placeholders)
-    const pillarGeom = new THREE.CylinderGeometry(0.35, 0.35, 6, 18);
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xb8c0c8, roughness: 0.9 });
-    const pillar1 = new THREE.Mesh(pillarGeom, pillarMat);
-    pillar1.position.set(-4, 3, 2);
-    scene.add(pillar1);
-
-    const pillar2 = new THREE.Mesh(pillarGeom, pillarMat);
-    pillar2.position.set(4, 3, -1);
-    scene.add(pillar2);
-
-    sceneRef.current = scene;
-    cameraRef.current = camera;
-    rendererRef.current = renderer;
-    controlsRef.current = controls;
-
-    const fpsController = createFpsController({
-      camera,
-      scene,
-      domElement: renderer.domElement,
-      bounds: ROOM_BOUNDS,
-      eyeHeight: FPS_EYE_HEIGHT,
-      moveSpeed: SPEED_PRESETS[speedIndex].value
+    const engine = createVenueEngine({
+      host,
+      mode,
+      snap: snapOn,
+      grid: gridOn,
+      fov,
+      moveSpeed: SPEED_PRESETS[speedIndex].value,
+      onSelect: setSelected,
+      onWarning: setWarning,
+      onHistoryChange: setHistoryState
     });
-    fpsController.setEnabled(walkModeRef.current);
-    fpsControllerRef.current = fpsController;
 
-    rebuildZones();
+    engineRef.current = engine;
 
-    // --- events ---
-    const onResize = () => {
-      const { w: nw, h: nh } = getHostSize();
-      camera.aspect = nw / nh;
-      camera.updateProjectionMatrix();
-      renderer.setSize(nw, nh);
-    };
-
-    const onPointerDown = (ev: PointerEvent) => {
-      if (!sceneRef.current || !cameraRef.current || !rendererRef.current) return;
-
-      if (walkModeRef.current) {
-        ev.stopPropagation();
-        return;
-      }
-
-      ev.stopPropagation();
-      setMouseFromEvent(ev, renderer.domElement);
-
-      // measurement click
-      if (measureOn) {
-        const hit = intersectFloor(cameraRef.current);
-        hit.y = 0.02;
-        // if previous measurement exists, clear first
-        const m = measureRef.current;
-        if (m.line || m.dotA || m.dotB) clearMeasurement();
-        setMeasurementPoint(hit);
-        return;
-      }
-
-      // selection / drag
-      const hits = intersectObjects(cameraRef.current, sceneRef.current);
-      const picked = hits.find((h) => {
-        // find top-level object meta by walking up parents
-        let cur: THREE.Object3D | null = h.object;
-        while (cur) {
-          const meta = objsRef.current.find((o) => o.mesh === cur);
-          if (meta) return true;
-          cur = cur.parent;
-        }
-        return false;
-      });
-
-      if (!picked) {
-        select(undefined);
-        draggingRef.current = { active: false };
-        return;
-      }
-
-      // resolve meta
-      let cur: THREE.Object3D | null = picked.object;
-      let meta: ObjMeta | undefined;
-      while (cur) {
-        meta = objsRef.current.find((o) => o.mesh === cur);
-        if (meta) break;
-        cur = cur.parent;
-      }
-      if (!meta) return;
-
-      select(meta);
-
-      draggingRef.current.active = true;
-      draggingRef.current.target = meta;
-      draggingRef.current.lastGoodPos = meta.mesh.position.clone();
-      draggingRef.current.pointerId = ev.pointerId;
-
-      const floorHit = intersectFloor(cameraRef.current);
-      const offset = meta.mesh.position.clone().sub(floorHit);
-      draggingRef.current.dragOffset = offset;
-
-      if (controlsRef.current) {
-        controlsRef.current.enabled = false;
-      }
-      renderer.domElement.setPointerCapture?.(ev.pointerId);
-    };
-
-    const onPointerMove = (ev: PointerEvent) => {
-      if (!draggingRef.current.active) return;
-      const meta = draggingRef.current.target;
-      if (!meta) return;
-      if (!cameraRef.current || !rendererRef.current) return;
-
-      ev.stopPropagation();
-      setMouseFromEvent(ev, renderer.domElement);
-
-      const floorHit = intersectFloor(cameraRef.current);
-      const offset = draggingRef.current.dragOffset ?? new THREE.Vector3();
-      const nextPos = floorHit.clone().add(offset);
-
-      applySnapPosition(nextPos);
-      if (meta.type === "stage") {
-        nextPos.y = getStageStackY(meta, nextPos, getRotationDeg(meta));
-      } else {
-        nextPos.y = meta.mesh.position.y;
-      }
-
-      const ok = isValidPlacement(meta, nextPos);
-      if (ok) {
-        meta.mesh.position.copy(nextPos);
-        draggingRef.current.lastGoodPos = nextPos.clone();
-        colorize(meta, "selected");
-      } else {
-        // show invalid in red but still move visually
-        meta.mesh.position.copy(nextPos);
-        colorize(meta, "bad");
-      }
-    };
-
-    const onPointerUp = (ev: PointerEvent) => {
-      if (!draggingRef.current.active) return;
-      const meta = draggingRef.current.target;
-      if (!meta) return;
-
-      ev.stopPropagation();
-      // if current spot invalid, snap back to last good
-      const pos = meta.mesh.position.clone();
-      const ok = isValidPlacement(meta, pos, getRotationDeg(meta));
-      if (!ok && draggingRef.current.lastGoodPos) {
-        meta.mesh.position.copy(draggingRef.current.lastGoodPos);
-        colorize(meta, "selected");
-      }
-
-      if (rendererRef.current && draggingRef.current.pointerId !== undefined) {
-        rendererRef.current.domElement.releasePointerCapture(draggingRef.current.pointerId);
-      }
-      if (controlsRef.current) {
-        controlsRef.current.enabled = !walkModeRef.current;
-      }
-      draggingRef.current = { active: false };
-    };
-
-    const onKeyDown = (ev: KeyboardEvent) => {
-      const key = ev.key.toLowerCase();
-
-      if (walkModeRef.current) return;
-
-      if (ev.key === "Delete" || ev.key === "Backspace") {
-        ev.preventDefault();
-        deleteSelected();
-        return;
-      }
-
-      const meta = getSelectedMeta();
-      if (!meta) return;
-
-      const step = getRotationStep();
-      if (key === "q") rotateSelected(step);
-      if (key === "e") rotateSelected(-step);
-    };
-
+    const onResize = () => engine.resize();
     window.addEventListener("resize", onResize);
-    renderer.domElement.addEventListener("pointerdown", onPointerDown);
-    renderer.domElement.addEventListener("pointermove", onPointerMove);
-    renderer.domElement.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("keydown", onKeyDown);
-
-    const clock = new THREE.Clock();
-
-    let raf = 0;
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
-      const delta = clock.getDelta();
-
-      fpsControllerRef.current?.update(delta);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    tick();
 
     return () => {
-      cancelAnimationFrame(raf);
       window.removeEventListener("resize", onResize);
-      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-      renderer.domElement.removeEventListener("pointermove", onPointerMove);
-      renderer.domElement.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("keydown", onKeyDown);
-
-      fpsController.dispose();
-      controls.dispose();
-      renderer.dispose();
-      if (gridRef.current) {
-        gridRef.current.geometry.dispose();
-        const material = gridRef.current.material as THREE.Material;
-        material.dispose();
-      }
-
-      if (renderer.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
-
-      sceneRef.current = null;
-      cameraRef.current = null;
-      rendererRef.current = null;
-      controlsRef.current = null;
-      fpsControllerRef.current = null;
-      gridRef.current = null;
+      engine.dispose();
+      engineRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [measureOn]);
-
-  // keep zones toggle in sync
-  useEffect(() => {
-    const g = zonesGroupRef.current;
-    if (g) g.visible = zonesOn;
-  }, [zonesOn]);
+  }, []);
 
   useEffect(() => {
-    const g = gridRef.current;
-    if (g) g.visible = gridOn;
+    engineRef.current?.setMode(mode);
+  }, [mode]);
+
+  useEffect(() => {
+    engineRef.current?.setSnap(snapOn);
+  }, [snapOn]);
+
+  useEffect(() => {
+    engineRef.current?.setGrid(gridOn);
   }, [gridOn]);
 
   useEffect(() => {
-    const camera = cameraRef.current;
-    if (!camera) return;
-    camera.fov = fov;
-    camera.updateProjectionMatrix();
+    engineRef.current?.setFov(fov);
   }, [fov]);
 
   useEffect(() => {
-    const fpsController = fpsControllerRef.current;
-    if (!fpsController) return;
-    fpsController.setMoveSpeed(SPEED_PRESETS[speedIndex].value);
+    engineRef.current?.setMoveSpeed(SPEED_PRESETS[speedIndex].value);
   }, [speedIndex]);
 
+  const addObject = (type: PlaceType) => engineRef.current?.addObject(type);
+  const rotateLeft = () => engineRef.current?.rotateSelected("left");
+  const rotateRight = () => engineRef.current?.rotateSelected("right");
+  const deleteSelected = () => engineRef.current?.deleteSelected();
+  const undo = () => engineRef.current?.undo();
+  const redo = () => engineRef.current?.redo();
+
   return (
-    <div className="w-full h-[calc(100vh-120px)] relative rounded-xl overflow-hidden border border-white/10">
-      {/* 3D host */}
+    <div className="relative h-[calc(100vh-120px)] w-full overflow-hidden rounded-2xl border border-slate-200/20 bg-slate-950/40">
       <div ref={hostRef} className="absolute inset-0" />
 
-      {/* UI overlay */}
-      <div className="absolute top-3 left-3 flex flex-col gap-2 bg-black/40 border border-white/10 rounded-xl p-3 backdrop-blur">
-        <div className="text-white font-semibold">Omni-Twin Viewer + Editor Demo</div>
-
-        <div className="flex flex-wrap gap-2">
+      <div className="absolute inset-x-0 top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-slate-900/70 px-4 py-3 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 text-white">
           <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => addObject("table")}
+            className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+              mode === "walk" ? "bg-sky-500/80 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
+            }`}
+            onClick={() => setMode((current) => (current === "walk" ? "edit" : "walk"))}
           >
-            + Table
+            Mode: {mode === "walk" ? "Walk" : "Edit"}
           </button>
           <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => addObject("chair")}
-          >
-            + Chair
-          </button>
-          <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => addObject("stage")}
-          >
-            + Stage
-          </button>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => setWalkMode((v) => !v)}
-          >
-            Mode: {walkMode ? "Walk" : "Edit"}
-          </button>
-
-          <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => setGridOn((v) => !v)}
-          >
-            Grid: {gridOn ? "ON" : "OFF"}
-          </button>
-
-          <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => setZonesOn((v) => !v)}
-          >
-            Zones: {zonesOn ? "ON" : "OFF"}
-          </button>
-
-          <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() => {
-              // turning on measure cancels drag selection visuals
-              setMeasureOn((v) => !v);
-              clearMeasurement();
-              setHint("Measurement: click floor once (A), then again (B).");
-            }}
-          >
-            Measure: {measureOn ? "ON" : "OFF"}
-          </button>
-
-          <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm"
-            onClick={() =>
-              setSnapOn((v) => {
-                const next = !v;
-                snapOnRef.current = next;
-                return next;
-              })
-            }
+            className={`rounded-lg px-3 py-2 text-sm ${
+              snapOn ? "bg-emerald-500/70 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
+            }`}
+            onClick={() => setSnapOn((value) => !value)}
           >
             Snap: {snapOn ? "ON" : "OFF"}
           </button>
+          <button
+            className={`rounded-lg px-3 py-2 text-sm ${
+              gridOn ? "bg-indigo-500/70 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
+            }`}
+            onClick={() => setGridOn((value) => !value)}
+          >
+            Grid: {gridOn ? "ON" : "OFF"}
+          </button>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <label className="text-xs text-white/80 flex items-center gap-2">
-            <span className="min-w-[80px]">FOV</span>
-            <input
-              type="range"
-              min={70}
-              max={110}
-              step={1}
-              value={fov}
-              onChange={(event) => setFov(Number(event.target.value))}
-              className="w-36 accent-sky-400"
-            />
-            <span className="text-white/60 tabular-nums w-10">{Math.round(fov)}</span>
-          </label>
-          <label className="text-xs text-white/80 flex items-center gap-2">
-            <span className="min-w-[80px]">Speed</span>
-            <input
-              type="range"
-              min={0}
-              max={SPEED_PRESETS.length - 1}
-              step={1}
-              value={speedIndex}
-              onChange={(event) => setSpeedIndex(Number(event.target.value))}
-              className="w-36 accent-sky-400"
-            />
-            <span className="text-white/60 w-14">{SPEED_PRESETS[speedIndex].label}</span>
-          </label>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => rotateSelected(rotationStep)}
-            disabled={!selectedId}
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={rotateLeft}
+            disabled={!selected}
           >
-            Rotate CCW
+            Rotate Left
           </button>
           <button
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => rotateSelected(-rotationStep)}
-            disabled={!selectedId}
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={rotateRight}
+            disabled={!selected}
           >
-            Rotate CW
+            Rotate Right
           </button>
           <button
-            className="px-3 py-2 rounded-lg bg-red-500/30 hover:bg-red-500/40 text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            className="rounded-lg bg-rose-500/30 px-3 py-2 text-sm text-white hover:bg-rose-500/45 disabled:cursor-not-allowed disabled:opacity-40"
             onClick={deleteSelected}
-            disabled={!selectedId}
+            disabled={!selected}
           >
             Delete
           </button>
+          <button
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={undo}
+            disabled={!historyState.canUndo}
+          >
+            Undo
+          </button>
+          <button
+            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={redo}
+            disabled={!historyState.canRedo}
+          >
+            Redo
+          </button>
         </div>
+      </div>
 
-        <div className="text-xs text-white/80">Selected: {selectedLabel}</div>
-        <div className="text-xs text-white/80">Measure: {measureText}</div>
-        <div className="text-xs text-white/70 max-w-[340px]">{hint}</div>
-        <div className="text-[11px] text-white/50">
-          {walkMode
-            ? "Walk: click to lock, WASD, Shift sprint, Esc unlock"
-            : "Edit: drag to orbit, right-drag pan, scroll zoom"}
+      <div className="absolute left-4 top-20 z-10 w-60 rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-white shadow-lg backdrop-blur">
+        <div className="text-sm font-semibold uppercase tracking-[0.2em] text-white/60">Inventory</div>
+        <div className="mt-4 flex flex-col gap-3">
+          <button
+            className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
+            onClick={() => addObject("stage")}
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10">
+              <span className="h-4 w-6 rounded-sm border border-white/60" />
+            </span>
+            <div>
+              <div className="text-sm font-semibold">Stage</div>
+              <div className="text-xs text-white/60">3.2m x 2.2m block</div>
+            </div>
+          </button>
+          <button
+            className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
+            onClick={() => addObject("table")}
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10">
+              <span className="h-4 w-4 rounded-full border border-white/60" />
+            </span>
+            <div>
+              <div className="text-sm font-semibold">Round Table</div>
+              <div className="text-xs text-white/60">0.6m radius</div>
+            </div>
+          </button>
+          <button
+            className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
+            onClick={() => addObject("chair")}
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10">
+              <span className="h-4 w-4 rounded-sm border border-white/60" />
+            </span>
+            <div>
+              <div className="text-sm font-semibold">Chair</div>
+              <div className="text-xs text-white/60">0.45m footprint</div>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div className="absolute right-4 top-20 z-10 w-64 rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-white shadow-lg backdrop-blur">
+        <div className="text-sm font-semibold uppercase tracking-[0.2em] text-white/60">Properties</div>
+        <div className="mt-4 space-y-3 text-sm">
+          <div className="flex items-center justify-between text-white/70">
+            <span>Type</span>
+            <span className="text-white">{selected ? selected.type : "None"}</span>
+          </div>
+          <div className="space-y-2">
+            <div className="text-xs uppercase tracking-[0.2em] text-white/50">Position</div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded-lg bg-white/5 px-2 py-2">
+                <div className="text-white/50">X</div>
+                <div className="text-white">{selected ? selected.position.x.toFixed(2) : "--"}</div>
+              </div>
+              <div className="rounded-lg bg-white/5 px-2 py-2">
+                <div className="text-white/50">Y</div>
+                <div className="text-white">{selected ? selected.position.y.toFixed(2) : "--"}</div>
+              </div>
+              <div className="rounded-lg bg-white/5 px-2 py-2">
+                <div className="text-white/50">Z</div>
+                <div className="text-white">{selected ? selected.position.z.toFixed(2) : "--"}</div>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="text-xs uppercase tracking-[0.2em] text-white/50">Rotation</div>
+            <div className="rounded-lg bg-white/5 px-3 py-2 text-white">
+              {selected ? `${selected.rotationDeg.toFixed(1)} deg` : "--"}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="text-xs uppercase tracking-[0.2em] text-white/50">Camera</div>
+            <label className="flex items-center justify-between gap-3 text-xs text-white/70">
+              <span>FOV</span>
+              <input
+                type="range"
+                min={70}
+                max={110}
+                step={1}
+                value={fov}
+                onChange={(event) => setFov(Number(event.target.value))}
+                className="w-24 accent-sky-400"
+              />
+              <span className="w-10 text-right text-white">{Math.round(fov)}</span>
+            </label>
+            <label className="flex items-center justify-between gap-3 text-xs text-white/70">
+              <span>Speed</span>
+              <input
+                type="range"
+                min={0}
+                max={SPEED_PRESETS.length - 1}
+                step={1}
+                value={speedIndex}
+                onChange={(event) => setSpeedIndex(Number(event.target.value))}
+                className="w-24 accent-sky-400"
+              />
+              <span className="w-10 text-right text-white">{SPEED_PRESETS[speedIndex].label}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-between gap-3 border-t border-white/10 bg-slate-900/70 px-4 py-2 text-xs text-white/70 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-white">Mode: {mode === "walk" ? "Walk" : "Edit"}</span>
+          <span>Snap: {snapOn ? "ON" : "OFF"}</span>
+          <span>Grid: {gridOn ? "ON" : "OFF"}</span>
+        </div>
+        <div className={warning ? "text-rose-200" : "text-white/60"}>
+          {warning ?? "All clear"}
         </div>
       </div>
     </div>
