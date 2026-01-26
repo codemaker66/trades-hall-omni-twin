@@ -14,10 +14,15 @@ export const DragPreview = () => {
     const groupRef = useRef<THREE.Group>(null)
     const objectBounds = useRef({ centerY: 0, bottomOffset: 0, halfX: 0, halfZ: 0, ready: false })
     const stackRayOriginY = 50
+    const areaDragRef = useRef<{ active: boolean, start: THREE.Vector3 | null, end: THREE.Vector3 | null }>({
+        active: false,
+        start: null,
+        end: null
+    })
     const [position, setPosition] = useState<[number, number, number] | null>(null)
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0) // Floor plane at y=0
 
-    const { camera, raycaster, pointer, scene } = useThree()
+    const { camera, raycaster, pointer, scene, gl } = useThree()
 
     // Determine Component
     const Component =
@@ -46,6 +51,54 @@ export const DragPreview = () => {
         objectBounds.current.halfX = size.x / 2
         objectBounds.current.halfZ = size.z / 2
         objectBounds.current.ready = true
+    }
+
+    const getPointFromEvent = (e: PointerEvent) => {
+        const target = e.target as HTMLElement
+        if (!target) return null
+        const rect = target.getBoundingClientRect()
+        if (!rect.width || !rect.height) return null
+        const x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+        const y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+        raycaster.setFromCamera({ x, y }, camera)
+        const hit = new THREE.Vector3()
+        return raycaster.ray.intersectPlane(plane, hit) ? hit : null
+    }
+
+    const getChairY = (x: number, z: number) => {
+        ensureObjectBounds()
+        const downRay = new THREE.Raycaster()
+        const chairCenterY = (groupRef.current?.position.y ?? 0) + objectBounds.current.centerY
+        downRay.set(new THREE.Vector3(x, chairCenterY, z), new THREE.Vector3(0, -1, 0))
+
+        const downIntersects = downRay.intersectObjects(scene.children, true)
+        const state = useVenueStore.getState()
+        let targetY = 0
+
+        for (const hit of downIntersects) {
+            let current: THREE.Object3D | null = hit.object
+            let rootGroup: THREE.Object3D | null = null
+
+            while (current) {
+                if (current.userData && current.userData.id) {
+                    rootGroup = current
+                    break
+                }
+                current = current.parent
+            }
+
+            if (!rootGroup || !rootGroup.userData.id) continue
+
+            const hitItem = state.items.find(i => i.id === rootGroup!.userData.id)
+            if (!hitItem) continue
+
+            if (hitItem.type === 'platform') {
+                targetY = hit.point.y
+                break
+            }
+        }
+
+        return targetY + objectBounds.current.bottomOffset
     }
 
     // Update Ghost Position
@@ -123,12 +176,62 @@ export const DragPreview = () => {
 
     // Handle Drop (Global Pointer Up)
     useEffect(() => {
+        const handlePointerDown = (e: PointerEvent) => {
+            if (draggedItemType !== 'chair') return
+            if (e.button !== 0) return
+            const isCanvas = (e.target as HTMLElement).nodeName === 'CANVAS'
+            if (!isCanvas) return
+            const hit = getPointFromEvent(e)
+            if (!hit) return
+            areaDragRef.current.active = true
+            areaDragRef.current.start = hit.clone()
+            areaDragRef.current.end = hit.clone()
+        }
+
+        const handlePointerMove = (e: PointerEvent) => {
+            if (!areaDragRef.current.active) return
+            const hit = getPointFromEvent(e)
+            if (!hit) return
+            areaDragRef.current.end = hit.clone()
+        }
+
         const handlePointerUp = (e: PointerEvent) => {
             if (!draggedItemType) return
 
             // Prevent dropping if mouse is released over UI elements (buttons, etc)
             // We assume the canvas is the target when clicking on the 3D scene.
             const isCanvas = (e.target as HTMLElement).nodeName === 'CANVAS'
+
+            if (draggedItemType === 'chair' && areaDragRef.current.active) {
+                areaDragRef.current.active = false
+                const start = areaDragRef.current.start
+                const end = areaDragRef.current.end
+                areaDragRef.current.start = null
+                areaDragRef.current.end = null
+
+                if (isCanvas && start && end) {
+                    const minX = Math.min(start.x, end.x)
+                    const maxX = Math.max(start.x, end.x)
+                    const minZ = Math.min(start.z, end.z)
+                    const maxZ = Math.max(start.z, end.z)
+                    const spacing = Math.max(0.6, snappingEnabled ? snapGrid : 0.6)
+                    const startX = Math.round(minX / spacing) * spacing
+                    const startZ = Math.round(minZ / spacing) * spacing
+                    const endX = Math.round(maxX / spacing) * spacing
+                    const endZ = Math.round(maxZ / spacing) * spacing
+
+                    for (let x = startX; x <= endX + 0.001; x += spacing) {
+                        for (let z = startZ; z <= endZ + 0.001; z += spacing) {
+                            const y = getChairY(x, z)
+                            addItem('chair', [x, y, z])
+                        }
+                    }
+                }
+
+                setDraggedItem(null)
+                setPosition(null)
+                return
+            }
 
             if (isCanvas && position) {
                 addItem(draggedItemType, position)
@@ -141,9 +244,16 @@ export const DragPreview = () => {
             }
         }
 
+        const element = gl.domElement
+        element.addEventListener('pointerdown', handlePointerDown)
+        element.addEventListener('pointermove', handlePointerMove)
         window.addEventListener('pointerup', handlePointerUp)
-        return () => window.removeEventListener('pointerup', handlePointerUp)
-    }, [draggedItemType, position, addItem, setDraggedItem])
+        return () => {
+            element.removeEventListener('pointerdown', handlePointerDown)
+            element.removeEventListener('pointermove', handlePointerMove)
+            window.removeEventListener('pointerup', handlePointerUp)
+        }
+    }, [draggedItemType, position, addItem, setDraggedItem, snappingEnabled, snapGrid, gl])
 
     if (!draggedItemType || !Component) return null
 
