@@ -117,6 +117,22 @@ export const useVenueStore = create<VenueState>((set) => ({
         const selectedItems = state.items.filter(i => state.selectedIds.includes(i.id))
         if (selectedItems.length === 0) return {}
 
+        const chairsOnly = selectedItems.every(item => item.type === 'chair')
+        if (chairsOnly) {
+            const rad = (amountDegrees * Math.PI) / 180
+            const newItems = state.items.map(item => {
+                if (!state.selectedIds.includes(item.id)) return item
+
+                const newRotY = item.rotation[1] + rad
+                return {
+                    ...item,
+                    rotation: [item.rotation[0], newRotY, item.rotation[2]] as [number, number, number]
+                }
+            })
+
+            return { items: newItems }
+        }
+
         let centerX = 0
         let centerZ = 0
 
