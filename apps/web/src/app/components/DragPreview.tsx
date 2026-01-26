@@ -19,6 +19,7 @@ export const DragPreview = () => {
         start: null,
         end: null
     })
+    const [previewPositions, setPreviewPositions] = useState<[number, number, number][]>([])
     const [position, setPosition] = useState<[number, number, number] | null>(null)
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0) // Floor plane at y=0
 
@@ -51,6 +52,29 @@ export const DragPreview = () => {
         objectBounds.current.halfX = size.x / 2
         objectBounds.current.halfZ = size.z / 2
         objectBounds.current.ready = true
+    }
+
+    const applyGhostMaterials = (root: THREE.Object3D) => {
+        root.traverse((child) => {
+            const mesh = child as THREE.Mesh
+            if (!mesh.isMesh || !mesh.material) return
+
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+            materials.forEach((mat) => {
+                if (!mat) return
+                if ('emissive' in mat) {
+                    mat.emissive = new THREE.Color('#7c6fff')
+                    mat.emissiveIntensity = 0.6
+                }
+                mat.transparent = true
+                mat.opacity = 0.35
+                mat.depthWrite = false
+            })
+
+            mesh.castShadow = false
+            mesh.receiveShadow = false
+            mesh.raycast = () => null
+        })
     }
 
     const getPointFromEvent = (e: PointerEvent) => {
@@ -99,6 +123,28 @@ export const DragPreview = () => {
         }
 
         return targetY + objectBounds.current.bottomOffset
+    }
+
+    const buildPreviewGrid = (start: THREE.Vector3, end: THREE.Vector3) => {
+        const minX = Math.min(start.x, end.x)
+        const maxX = Math.max(start.x, end.x)
+        const minZ = Math.min(start.z, end.z)
+        const maxZ = Math.max(start.z, end.z)
+        const spacing = Math.max(0.6, snappingEnabled ? snapGrid : 0.6)
+        const startX = Math.round(minX / spacing) * spacing
+        const startZ = Math.round(minZ / spacing) * spacing
+        const endX = Math.round(maxX / spacing) * spacing
+        const endZ = Math.round(maxZ / spacing) * spacing
+        const positions: [number, number, number][] = []
+
+        for (let x = startX; x <= endX + 0.001; x += spacing) {
+            for (let z = startZ; z <= endZ + 0.001; z += spacing) {
+                const y = getChairY(x, z)
+                positions.push([x, y, z])
+            }
+        }
+
+        return positions
     }
 
     // Update Ghost Position
@@ -176,6 +222,10 @@ export const DragPreview = () => {
 
     // Handle Drop (Global Pointer Up)
     useEffect(() => {
+        if (groupRef.current && draggedItemType) {
+            applyGhostMaterials(groupRef.current)
+        }
+
         const handlePointerDown = (e: PointerEvent) => {
             if (draggedItemType !== 'chair') return
             if (e.button !== 0) return
@@ -186,6 +236,7 @@ export const DragPreview = () => {
             areaDragRef.current.active = true
             areaDragRef.current.start = hit.clone()
             areaDragRef.current.end = hit.clone()
+            setPreviewPositions(buildPreviewGrid(hit, hit))
         }
 
         const handlePointerMove = (e: PointerEvent) => {
@@ -193,6 +244,9 @@ export const DragPreview = () => {
             const hit = getPointFromEvent(e)
             if (!hit) return
             areaDragRef.current.end = hit.clone()
+            if (areaDragRef.current.start) {
+                setPreviewPositions(buildPreviewGrid(areaDragRef.current.start, hit))
+            }
         }
 
         const handlePointerUp = (e: PointerEvent) => {
@@ -208,6 +262,7 @@ export const DragPreview = () => {
                 const end = areaDragRef.current.end
                 areaDragRef.current.start = null
                 areaDragRef.current.end = null
+                setPreviewPositions([])
 
                 if (isCanvas && start && end) {
                     const minX = Math.min(start.x, end.x)
@@ -237,10 +292,12 @@ export const DragPreview = () => {
                 addItem(draggedItemType, position)
                 setDraggedItem(null)
                 setPosition(null)
+                setPreviewPositions([])
             } else {
                 // Cancel drag if dropped on UI or off-screen
                 setDraggedItem(null)
                 setPosition(null)
+                setPreviewPositions([])
             }
         }
 
@@ -258,17 +315,37 @@ export const DragPreview = () => {
     if (!draggedItemType || !Component) return null
 
     return (
-        <group ref={groupRef}>
-            <Component />
-            {/* Override Material for Ghost Effect */}
-            <mesh position={[0, 1, 0]}> {/* Just a visual indicator helper if needed, but lets try traversing */}
-            </mesh>
+        <group>
+            <group ref={groupRef}>
+                <Component />
+                {/* Override Material for Ghost Effect */}
+                <mesh position={[0, 1, 0]}> {/* Just a visual indicator helper if needed, but lets try traversing */}
+                </mesh>
 
-            {/* Visual Helper Ring */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
-                <ringGeometry args={[0.5, 0.6, 32]} />
-                <meshBasicMaterial color="#6366f1" transparent opacity={0.6} side={THREE.DoubleSide} />
-            </mesh>
+                {/* Visual Helper Ring */}
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+                    <ringGeometry args={[0.5, 0.6, 32]} />
+                    <meshBasicMaterial color="#6366f1" transparent opacity={0.6} side={THREE.DoubleSide} />
+                </mesh>
+            </group>
+
+            {draggedItemType === 'chair' && previewPositions.map((pos, index) => (
+                <GhostChairInstance key={`ghost-${index}`} position={pos} applyGhostMaterials={applyGhostMaterials} />
+            ))}
+        </group>
+    )
+}
+
+const GhostChairInstance = ({ position, applyGhostMaterials }: { position: [number, number, number], applyGhostMaterials: (root: THREE.Object3D) => void }) => {
+    const ref = useRef<THREE.Group>(null)
+
+    useEffect(() => {
+        if (ref.current) applyGhostMaterials(ref.current)
+    }, [applyGhostMaterials])
+
+    return (
+        <group ref={ref} position={position}>
+            <Chair />
         </group>
     )
 }
