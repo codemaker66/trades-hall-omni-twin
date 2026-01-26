@@ -21,6 +21,7 @@ export const DragPreview = () => {
     })
     const [previewPositions, setPreviewPositions] = useState<[number, number, number][]>([])
     const [position, setPosition] = useState<[number, number, number] | null>(null)
+    const [chairRotation, setChairRotation] = useState(Math.PI)
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0) // Floor plane at y=0
 
     const { camera, raycaster, pointer, scene, gl } = useThree()
@@ -34,6 +35,8 @@ export const DragPreview = () => {
 
     useEffect(() => {
         objectBounds.current.ready = false
+        if (draggedItemType === 'chair') setChairRotation(Math.PI)
+        else setChairRotation(0)
     }, [draggedItemType])
 
     const ensureObjectBounds = () => {
@@ -214,6 +217,11 @@ export const DragPreview = () => {
             setPosition([target.x, target.y, target.z])
             if (groupRef.current) {
                 groupRef.current.position.set(target.x, target.y, target.z)
+                if (draggedItemType === 'chair') {
+                    groupRef.current.rotation.y = chairRotation
+                } else {
+                    groupRef.current.rotation.y = 0
+                }
             }
         } else {
             setPosition(null)
@@ -224,6 +232,15 @@ export const DragPreview = () => {
     useEffect(() => {
         if (groupRef.current && draggedItemType) {
             applyGhostMaterials(groupRef.current)
+        }
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (draggedItemType !== 'chair') return
+            const key = e.key.toLowerCase()
+            if (key !== 'q' && key !== 'e') return
+            e.preventDefault()
+            const step = Math.PI / 2
+            setChairRotation((prev) => (key === 'q' ? prev - step : prev + step))
         }
 
         const handlePointerDown = (e: PointerEvent) => {
@@ -278,12 +295,11 @@ export const DragPreview = () => {
                     for (let x = startX; x <= endX + 0.001; x += spacing) {
                         for (let z = startZ; z <= endZ + 0.001; z += spacing) {
                             const y = getChairY(x, z)
-                            addItem('chair', [x, y, z])
+                            addItem('chair', [x, y, z], [0, chairRotation, 0])
                         }
                     }
                 }
 
-                setDraggedItem(null)
                 setPosition(null)
                 return
             }
@@ -293,13 +309,21 @@ export const DragPreview = () => {
             }
 
             if (isCanvas && position) {
-                addItem(draggedItemType, position)
-                setDraggedItem(null)
-                setPosition(null)
-                setPreviewPositions([])
+                if (draggedItemType === 'chair') {
+                    addItem('chair', position, [0, chairRotation, 0])
+                    setPosition(null)
+                    setPreviewPositions([])
+                } else {
+                    addItem(draggedItemType, position)
+                    setDraggedItem(null)
+                    setPosition(null)
+                    setPreviewPositions([])
+                }
             } else {
                 // Cancel drag if dropped on UI or off-screen
-                setDraggedItem(null)
+                if (draggedItemType !== 'chair') {
+                    setDraggedItem(null)
+                }
                 setPosition(null)
                 setPreviewPositions([])
             }
@@ -308,13 +332,15 @@ export const DragPreview = () => {
         const element = gl.domElement
         element.addEventListener('pointerdown', handlePointerDown)
         element.addEventListener('pointermove', handlePointerMove)
+        window.addEventListener('keydown', handleKeyDown)
         window.addEventListener('pointerup', handlePointerUp)
         return () => {
             element.removeEventListener('pointerdown', handlePointerDown)
             element.removeEventListener('pointermove', handlePointerMove)
+            window.removeEventListener('keydown', handleKeyDown)
             window.removeEventListener('pointerup', handlePointerUp)
         }
-    }, [draggedItemType, position, addItem, setDraggedItem, snappingEnabled, snapGrid, gl])
+    }, [draggedItemType, position, addItem, setDraggedItem, snappingEnabled, snapGrid, chairRotation, gl])
 
     if (!draggedItemType || !Component) return null
 
@@ -334,13 +360,13 @@ export const DragPreview = () => {
             </group>
 
             {draggedItemType === 'chair' && previewPositions.map((pos, index) => (
-                <GhostChairInstance key={`ghost-${index}`} position={pos} applyGhostMaterials={applyGhostMaterials} />
+                <GhostChairInstance key={`ghost-${index}`} position={pos} rotationY={chairRotation} applyGhostMaterials={applyGhostMaterials} />
             ))}
         </group>
     )
 }
 
-const GhostChairInstance = ({ position, applyGhostMaterials }: { position: [number, number, number], applyGhostMaterials: (root: THREE.Object3D) => void }) => {
+const GhostChairInstance = ({ position, rotationY, applyGhostMaterials }: { position: [number, number, number], rotationY: number, applyGhostMaterials: (root: THREE.Object3D) => void }) => {
     const ref = useRef<THREE.Group>(null)
 
     useEffect(() => {
@@ -348,7 +374,7 @@ const GhostChairInstance = ({ position, applyGhostMaterials }: { position: [numb
     }, [applyGhostMaterials])
 
     return (
-        <group ref={ref} position={position}>
+        <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
             <Chair />
         </group>
     )

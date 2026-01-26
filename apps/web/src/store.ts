@@ -58,13 +58,13 @@ export const useVenueStore = create<VenueState>((set) => ({
     closeChairPrompt: () => set({ chairPrompt: null }),
     setDraggedItem: (type: FurnitureType | null) => set({ draggedItemType: type }),
 
-    addItem: (type, position = [0, 0, 0], rotation = [0, 0, 0], groupId) => set((state) => ({
+    addItem: (type, position = [0, 0, 0], rotation, groupId) => set((state) => ({
         items: [...state.items, {
             id: crypto.randomUUID(),
             groupId, // Optional group ID
             type,
             position,
-            rotation
+            rotation: rotation ?? (type === 'chair' ? [0, Math.PI, 0] : [0, 0, 0])
         }],
         selectedIds: []
     })),

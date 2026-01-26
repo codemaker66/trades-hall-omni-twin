@@ -30,6 +30,9 @@ export default function VenueViewer() {
       if ((e.target as HTMLElement).tagName === 'INPUT') return
 
       const key = e.key.toLowerCase()
+      const draggedItemType = useVenueStore.getState().draggedItemType
+      if ((key === 'q' || key === 'e') && draggedItemType === 'chair') return
+
       if (key === 'q') {
         useVenueStore.getState().rotateSelection(-90)
       } else if (key === 'e') {
