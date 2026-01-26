@@ -19,6 +19,7 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
     const pivotRef = useRef<THREE.Group>(null)
     const [gizmoVisible, setGizmoVisible] = useState(false)
     const pivotBaseY = useRef(0)
+    const bottomOffsets = useRef<{ [id: string]: number }>({})
 
     // Store initial offsets relative to pivot when drag starts
     const initialPositions = useRef<{ [id: string]: THREE.Vector3 }>({})
@@ -121,6 +122,7 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                         initialPositions.current = {}
                         initialRotations.current = {}
                         pivotBaseY.current = pivotPos.y
+                        bottomOffsets.current = {}
 
                         selectedIds.forEach(id => {
                             const obj = itemRefs.current[id]
@@ -129,6 +131,9 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                                 initialPositions.current[id] = obj.position.clone().sub(pivotPos)
                                 // Store initial rotation
                                 initialRotations.current[id] = obj.rotation.clone()
+
+                                const box = new THREE.Box3().setFromObject(obj)
+                                bottomOffsets.current[id] = box.isEmpty() ? 0 : obj.position.y - box.min.y
                             }
                         })
                     }}
@@ -139,6 +144,23 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
 
                         // Lock Pivot Y to its starting value to avoid vertical drift
                         pivotRef.current.position.y = pivotBaseY.current
+
+                        // Keep the lowest object above the floor
+                        let minBottom = Infinity
+                        selectedIds.forEach(id => {
+                            const offset = initialPositions.current[id]
+                            const bottomOffset = bottomOffsets.current[id]
+                            if (!offset) return
+                            if (bottomOffset === undefined) return
+                            const bottomY = pivotRef.current!.position.y + offset.y - bottomOffset
+                            if (bottomY < minBottom) minBottom = bottomY
+                        })
+
+                        if (minBottom < 0) {
+                            const adjustY = -minBottom
+                            pivotRef.current.position.y += adjustY
+                            pivotBaseY.current = pivotRef.current.position.y
+                        }
                         const newPivotPos = pivotRef.current.position
                         const pivotRotY = pivotRef.current.rotation.y
 
