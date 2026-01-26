@@ -60,6 +60,25 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
             a.min.z < b.max.z - eps
         )
     }
+    const getLocalBounds = (root: THREE.Object3D) => {
+        const box = new THREE.Box3()
+        root.updateWorldMatrix(true, false)
+        const inv = root.matrixWorld.clone().invert()
+
+        root.traverse((obj) => {
+            const mesh = obj as THREE.Mesh
+            if (!mesh.isMesh || !mesh.geometry) return
+            const geom = mesh.geometry
+            if (!geom.boundingBox) geom.computeBoundingBox()
+            if (!geom.boundingBox) return
+            const localBox = geom.boundingBox.clone()
+            localBox.applyMatrix4(mesh.matrixWorld)
+            localBox.applyMatrix4(inv)
+            box.union(localBox)
+        })
+
+        return box
+    }
     const ensureObjectBounds = () => {
         if (objectBounds.current.ready || !groupRef.current) return
 
@@ -287,12 +306,13 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                             rayOrigin.set(finalX, originY, finalZ)
                             downRay.set(rayOrigin, downDir)
 
-                            const downIntersects = downRay.intersectObjects(scene.children, true)
+                        const downIntersects = downRay.intersectObjects(scene.children, true)
+                        let platformRoot: THREE.Object3D | null = null
 
-                            for (const hit of downIntersects) {
-                                // Ignore self or selection
-                                let current: THREE.Object3D | null = hit.object
-                                let rootGroup: THREE.Object3D | null = null
+                        for (const hit of downIntersects) {
+                            // Ignore self or selection
+                            let current: THREE.Object3D | null = hit.object
+                            let rootGroup: THREE.Object3D | null = null
 
                                 while (current) {
                                     if (current.userData && current.userData.id) {
@@ -309,21 +329,59 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                                 const hitItem = state.items.find(i => i.id === rootGroup!.userData.id)
                                 if (!hitItem) continue
 
-                                if (type === 'platform' && hitItem.type !== 'platform') continue
-                                if (type !== 'platform' && hitItem.type !== 'platform') continue
+                            if (type === 'platform' && hitItem.type !== 'platform') continue
+                            if (type !== 'platform' && hitItem.type !== 'platform') continue
 
-                                targetY = hit.point.y
-                                break // Closest valid surface for this ray
+                            targetY = hit.point.y
+                            if (hitItem.type === 'platform') {
+                                platformRoot = rootGroup
                             }
-
-                            // 4. Apply offset
-                            let finalY = targetY
-                            if (type === 'chair' || type === 'platform') {
-                                finalY += objectBounds.current.bottomOffset
-                            }
-
-                            deltaY = finalY - position[1]
+                            break // Closest valid surface for this ray
                         }
+
+                        // 4. Apply offset
+                        let finalY = targetY
+                        if (type === 'chair' || type === 'platform') {
+                            finalY += objectBounds.current.bottomOffset
+                        }
+
+                        if (type === 'trestle-table' && platformRoot && groupRef.current) {
+                            const platformBox = getLocalBounds(platformRoot)
+                            if (!platformBox.isEmpty()) {
+                                const platformQuat = new THREE.Quaternion()
+                                const trestleQuat = new THREE.Quaternion()
+                                platformRoot.getWorldQuaternion(platformQuat)
+                                groupRef.current.getWorldQuaternion(trestleQuat)
+
+                                const relQuat = platformQuat.clone().invert().multiply(trestleQuat)
+                                const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(relQuat)
+                                const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(relQuat)
+
+                                const halfLen = trestleDims.length / 2
+                                const halfDepth = trestleDims.depth / 2
+                                const halfX = Math.abs(axisX.x) * halfLen + Math.abs(axisZ.x) * halfDepth
+                                const halfZ = Math.abs(axisX.z) * halfLen + Math.abs(axisZ.z) * halfDepth
+
+                                const localPos = platformRoot.worldToLocal(new THREE.Vector3(finalX, finalY, finalZ))
+                                const minX = platformBox.min.x + halfX
+                                const maxX = platformBox.max.x - halfX
+                                const minZ = platformBox.min.z + halfZ
+                                const maxZ = platformBox.max.z - halfZ
+
+                                if (minX <= maxX) localPos.x = THREE.MathUtils.clamp(localPos.x, minX, maxX)
+                                else localPos.x = (platformBox.min.x + platformBox.max.x) / 2
+
+                                if (minZ <= maxZ) localPos.z = THREE.MathUtils.clamp(localPos.z, minZ, maxZ)
+                                else localPos.z = (platformBox.min.z + platformBox.max.z) / 2
+
+                                const clampedWorld = platformRoot.localToWorld(localPos)
+                                finalX = clampedWorld.x
+                                finalZ = clampedWorld.z
+                            }
+                        }
+
+                        deltaY = finalY - position[1]
+                    }
 
                         // 5. Update Store
                         const deltaX = finalX - position[0]
