@@ -288,6 +288,10 @@ export const DragPreview = () => {
                 return
             }
 
+            if (draggedItemType === 'chair' && !areaDragRef.current.active && !isCanvas) {
+                return
+            }
+
             if (isCanvas && position) {
                 addItem(draggedItemType, position)
                 setDraggedItem(null)

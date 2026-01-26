@@ -1,279 +1,379 @@
-"use client";
+'use client'
 
-import React, { useEffect, useRef, useState } from "react";
-import {
-  createVenueEngine,
-  type EngineMode,
-  type HistoryState,
-  type PlaceType,
-  type SelectedInfo
-} from "./venueEngine";
-
-const SPEED_PRESETS = [
-  { label: "Slow", value: 2.6 },
-  { label: "Normal", value: 4.0 },
-  { label: "Fast", value: 5.8 }
-] as const;
+import { Scene } from './Scene'
+import { TrashBin } from './TrashBin'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useVenueStore, FurnitureType } from '../../store'
+import { useState, useEffect } from 'react'
 
 export default function VenueViewer() {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const engineRef = useRef<ReturnType<typeof createVenueEngine> | null>(null);
+  const addItem = useVenueStore((state) => state.addItem)
+  const selectedIds = useVenueStore((state) => state.selectedIds)
+  const removeItems = useVenueStore((state) => state.removeItems)
+  const ungroupItems = useVenueStore((state) => state.ungroupItems)
+  const items = useVenueStore((state) => state.items)
+  const snappingEnabled = useVenueStore((state) => state.snappingEnabled)
+  const toggleSnapping = useVenueStore((state) => state.toggleSnapping)
+  const setDraggedItem = useVenueStore((state) => state.setDraggedItem)
+  const transformMode = useVenueStore((state) => state.transformMode)
+  const toggleTransformMode = useVenueStore((state) => state.toggleTransformMode)
+  const rotateSelection = useVenueStore((state) => state.rotateSelection)
 
-  const [mode, setMode] = useState<EngineMode>("edit");
-  const [snapOn, setSnapOn] = useState(true);
-  const [gridOn, setGridOn] = useState(true);
-  const [fov, setFov] = useState(90);
-  const [speedIndex, setSpeedIndex] = useState(1);
-  const [selected, setSelected] = useState<SelectedInfo | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
-  const [historyState, setHistoryState] = useState<HistoryState>({ canUndo: false, canRedo: false });
+  const openChairPrompt = useVenueStore((state) => state.openChairPrompt)
+  const closeChairPrompt = useVenueStore((state) => state.closeChairPrompt)
+  const chairPrompt = useVenueStore((state) => state.chairPrompt)
 
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-
-    const engine = createVenueEngine({
-      host,
-      mode,
-      snap: snapOn,
-      grid: gridOn,
-      fov,
-      panSpeed: SPEED_PRESETS[speedIndex].value,
-      onSelect: setSelected,
-      onWarning: setWarning,
-      onHistoryChange: setHistoryState
-    });
-
-    engineRef.current = engine;
-
-    const onResize = () => engine.resize();
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      window.removeEventListener("resize", onResize);
-      engine.dispose();
-      engineRef.current = null;
-    };
-  }, []);
+  const [chairCount, setChairCount] = useState<number>(8)
 
   useEffect(() => {
-    engineRef.current?.setMode(mode);
-  }, [mode]);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') return
 
-  useEffect(() => {
-    engineRef.current?.setSnap(snapOn);
-  }, [snapOn]);
-
-  useEffect(() => {
-    engineRef.current?.setGrid(gridOn);
-  }, [gridOn]);
-
-  useEffect(() => {
-    engineRef.current?.setFov(fov);
-  }, [fov]);
-
-  useEffect(() => {
-    engineRef.current?.setPanSpeed(SPEED_PRESETS[speedIndex].value);
-  }, [speedIndex]);
-
-  const addObject = (type: PlaceType) => {
-    if (mode !== "edit") {
-      setMode("edit");
-      engineRef.current?.setMode("edit");
+      const key = e.key.toLowerCase()
+      if (key === 'q') {
+        useVenueStore.getState().rotateSelection(-90)
+      } else if (key === 'e') {
+        useVenueStore.getState().rotateSelection(90)
+      } else if (key === 'delete' || key === 'backspace') {
+        const selectedIds = useVenueStore.getState().selectedIds
+        if (selectedIds.length > 0) {
+          useVenueStore.getState().removeItems(selectedIds)
+        }
+      }
     }
-    engineRef.current?.addObject(type);
-  };
-  const rotateLeft = () => engineRef.current?.rotateSelected("left");
-  const rotateRight = () => engineRef.current?.rotateSelected("right");
-  const deleteSelected = () => engineRef.current?.deleteSelected();
-  const undo = () => engineRef.current?.undo();
-  const redo = () => engineRef.current?.redo();
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  const handleAddItemRequest = (type: FurnitureType) => {
+    if (type === 'round-table') {
+      openChairPrompt(type)
+      setChairCount(5) // Default based on user request example
+    } else {
+      addItem(type)
+    }
+  }
+
+  const handleConfirmChairs = () => {
+    if (!chairPrompt) return
+
+    const { tableId, type } = chairPrompt
+
+    // If we are reconfiguring an existing table
+    if (tableId) {
+      const table = items.find(i => i.id === tableId)
+      if (table) {
+        // 1. Remove old items in the same group (chairs) but keep the table
+        const groupItems = items.filter(i => i.groupId === table.groupId && i.id !== tableId)
+        removeItems(groupItems.map(i => i.id))
+
+        // 2. Add Chairs around existing table position
+        const radius = 1.3
+        const center = table.position
+        for (let i = 0; i < chairCount; i++) {
+          const angle = (i / chairCount) * Math.PI * 2
+          const x = center[0] + Math.sin(angle) * radius
+          const z = center[2] + Math.cos(angle) * radius
+          const rotY = angle + Math.PI
+          addItem('chair', [x, 0, z], [0, rotY, 0], table.groupId)
+        }
+      }
+    } else {
+      // Standard new table + chairs placement
+      // Create Group ID
+      const groupId = crypto.randomUUID()
+
+      // 1. Add the Round Table at center (for now)
+      const center: [number, number, number] = [0, 0, 0]
+      addItem('round-table', center, [0, 0, 0], groupId)
+
+      // 2. Add Chairs evenly spaced
+      const radius = 1.3 // Distance from center (Table R ~0.9 + clearance)
+      for (let i = 0; i < chairCount; i++) {
+        // Calculate angle
+        const angle = (i / chairCount) * Math.PI * 2
+
+        // Position
+        const x = center[0] + Math.sin(angle) * radius
+        const z = center[2] + Math.cos(angle) * radius
+
+        // Rotation: Face Center
+        const rotY = angle + Math.PI
+
+        addItem('chair', [x, 0, z], [0, rotY, 0], groupId)
+      }
+    }
+
+    closeChairPrompt()
+  }
+
+  // Check if current selection has any groups
+  const hasGroupsSelected = selectedIds.some(id => items.find(i => i.id === id)?.groupId)
+
+  const handleClosePrompt = () => closeChairPrompt()
 
   return (
-    <div className="relative h-[calc(100vh-120px)] w-full overflow-hidden rounded-2xl border border-slate-200/20 bg-slate-950/40">
-      <div ref={hostRef} className="absolute inset-0" />
-
-      <div className="absolute inset-x-0 top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-slate-900/70 px-4 py-3 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-2 text-white">
-          <button
-            className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-              mode === "nav" ? "bg-sky-500/80 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
-            }`}
-            onClick={() => setMode((current) => (current === "nav" ? "edit" : "nav"))}
-          >
-            Mode: {mode === "nav" ? "Nav" : "Edit"}
-          </button>
-          <button
-            className={`rounded-lg px-3 py-2 text-sm ${
-              snapOn ? "bg-emerald-500/70 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
-            }`}
-            onClick={() => setSnapOn((value) => !value)}
-          >
-            Snap: {snapOn ? "ON" : "OFF"}
-          </button>
-          <button
-            className={`rounded-lg px-3 py-2 text-sm ${
-              gridOn ? "bg-indigo-500/70 text-white" : "bg-white/10 text-white/80 hover:bg-white/15"
-            }`}
-            onClick={() => setGridOn((value) => !value)}
-          >
-            Grid: {gridOn ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-            onClick={rotateLeft}
-            disabled={!selected}
-          >
-            Rotate Left
-          </button>
-          <button
-            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-            onClick={rotateRight}
-            disabled={!selected}
-          >
-            Rotate Right
-          </button>
-          <button
-            className="rounded-lg bg-rose-500/30 px-3 py-2 text-sm text-white hover:bg-rose-500/45 disabled:cursor-not-allowed disabled:opacity-40"
-            onClick={deleteSelected}
-            disabled={!selected}
-          >
-            Delete
-          </button>
-          <button
-            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-            onClick={undo}
-            disabled={!historyState.canUndo}
-          >
-            Undo
-          </button>
-          <button
-            className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white/80 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-            onClick={redo}
-            disabled={!historyState.canRedo}
-          >
-            Redo
-          </button>
-        </div>
+    <div className="relative w-full h-[100dvh] bg-[#0b0f14] selection:bg-[#6366f1] selection:text-white overflow-hidden">
+      {/* 3D Scene Layer */}
+      <div className="absolute inset-0 z-0">
+        <Scene />
       </div>
 
-      <div className="absolute left-4 top-20 z-10 w-60 rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-white shadow-lg backdrop-blur">
-        <div className="text-sm font-semibold uppercase tracking-[0.2em] text-white/60">Inventory</div>
-        <div className="mt-4 flex flex-col gap-3">
-          <button
-            className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
-            onClick={() => addObject("stage")}
+      {/* UI Overlay Layer */}
+      {/* UI Overlay Layer */}
+      {/* UI Overlay Layer */}
+      <div className="absolute inset-0 z-10 pointer-events-none p-6 flex flex-col justify-between font-serif">
+        {/* Header / HUD */}
+        <header className="flex justify-between items-start">
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="border-4 border-[#3e2723] p-4 rounded-sm pointer-events-auto shadow-2xl relative overflow-hidden group min-w-[300px]"
+            style={{
+              backgroundColor: '#2d1b15',
+              backgroundImage: `repeating-linear-gradient(90deg, 
+                    rgba(255,255,255,0.03) 0px, 
+                    rgba(255,255,255,0.03) 1px, 
+                    transparent 1px, 
+                    transparent 40px, 
+                    rgba(0,0,0,0.4) 40px, 
+                    rgba(0,0,0,0.4) 42px),
+                    linear-gradient(to bottom, rgba(0,0,0,0.2), rgba(0,0,0,0.6))`
+            }}
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10">
-              <span className="h-4 w-6 rounded-sm border border-white/60" />
-            </span>
-            <div>
-              <div className="text-sm font-semibold">Stage</div>
-              <div className="text-xs text-white/60">3.2m x 2.2m block</div>
-            </div>
-          </button>
-          <button
-            className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
-            onClick={() => addObject("table")}
-          >
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10">
-              <span className="h-4 w-4 rounded-full border border-white/60" />
-            </span>
-            <div>
-              <div className="text-sm font-semibold">Round Table</div>
-              <div className="text-xs text-white/60">0.6m radius</div>
-            </div>
-          </button>
-          <button
-            className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
-            onClick={() => addObject("chair")}
-          >
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10">
-              <span className="h-4 w-4 rounded-sm border border-white/60" />
-            </span>
-            <div>
-              <div className="text-sm font-semibold">Chair</div>
-              <div className="text-xs text-white/60">0.45m footprint</div>
-            </div>
-          </button>
-        </div>
-      </div>
+            {/* Iron Studs / Bolts */}
+            <div className="absolute top-1 left-1 w-2 h-2 rounded-full bg-[#1a110e] shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" />
+            <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#1a110e] shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" />
+            <div className="absolute bottom-1 left-1 w-2 h-2 rounded-full bg-[#1a110e] shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" />
+            <div className="absolute bottom-1 right-1 w-2 h-2 rounded-full bg-[#1a110e] shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" />
 
-      <div className="absolute right-4 top-20 z-10 w-64 rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-white shadow-lg backdrop-blur">
-        <div className="text-sm font-semibold uppercase tracking-[0.2em] text-white/60">Properties</div>
-        <div className="mt-4 space-y-3 text-sm">
-          <div className="flex items-center justify-between text-white/70">
-            <span>Type</span>
-            <span className="text-white">{selected ? selected.type : "None"}</span>
-          </div>
-          <div className="space-y-2">
-            <div className="text-xs uppercase tracking-[0.2em] text-white/50">Position</div>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div className="rounded-lg bg-white/5 px-2 py-2">
-                <div className="text-white/50">X</div>
-                <div className="text-white">{selected ? selected.position.x.toFixed(2) : "--"}</div>
+            <h1 className="text-2xl font-bold text-[#d7ccc8] tracking-widest flex flex-col items-center drop-shadow-md pb-2 border-b border-[#5d4037]/50">
+              OMNITWIN
+              <span className="text-[#a1887f] text-xs font-normal tracking-[0.2em] mt-1 uppercase">Trades Hall Planner</span>
+            </h1>
+          </motion.div>
+
+          {/* Top Right Tools */}
+          <div className="flex gap-2 pointer-events-auto">
+            <button
+              onClick={toggleSnapping}
+              className={`px-4 py-2 rounded-sm border-2 transition-all font-semibold shadow-md ${snappingEnabled
+                ? 'bg-[#3e2723] border-[#8d6e63] text-[#d7ccc8]'
+                : 'bg-[#1a0f0a]/90 border-[#3e2723] text-[#795548] hover:bg-[#2d1b15] hover:text-[#a1887f]'
+                }`}
+            >
+              Grid Snap: {snappingEnabled ? 'ON' : 'OFF'}
+            </button>
+
+            {hasGroupsSelected && (
+              <button
+                onClick={toggleTransformMode}
+                className={`px-4 py-2 rounded-sm border-2 transition-all font-semibold shadow-md ${transformMode === 'rotate'
+                  ? 'bg-[#4e342e] border-[#ffb74d] text-[#ffcc80]'
+                  : 'bg-[#1a0f0a]/90 border-[#3e2723] text-[#795548] hover:bg-[#2d1b15] hover:text-[#a1887f]'
+                  }`}
+              >
+                Mode: {transformMode === 'rotate' ? 'ROTATE' : 'MOVE'}
+              </button>
+            )}
+
+            {transformMode === 'rotate' && hasGroupsSelected && (
+              <div className="flex gap-1 bg-[#2d1b15] p-1 rounded-sm border border-[#5d4037]">
+                <button
+                  onClick={() => rotateSelection(-90)}
+                  className="px-3 py-2 bg-[#3e2723] hover:bg-[#4e342e] text-[#ffcc80] rounded-sm font-bold border border-[#ffb74d]/30 transition-colors"
+                  title="Rotate -90°"
+                >
+                  ↺ 90°
+                </button>
+                <button
+                  onClick={() => rotateSelection(-1)}
+                  className="px-2 py-2 bg-[#3e2723] hover:bg-[#4e342e] text-[#ffcc80] rounded-sm font-medium border border-[#ffb74d]/30 text-xs transition-colors"
+                  title="Rotate -1°"
+                >
+                  -1°
+                </button>
+                <button
+                  onClick={() => rotateSelection(1)}
+                  className="px-2 py-2 bg-[#3e2723] hover:bg-[#4e342e] text-[#ffcc80] rounded-sm font-medium border border-[#ffb74d]/30 text-xs transition-colors"
+                  title="Rotate +1°"
+                >
+                  +1°
+                </button>
+                <button
+                  onClick={() => rotateSelection(90)}
+                  className="px-3 py-2 bg-[#3e2723] hover:bg-[#4e342e] text-[#ffcc80] rounded-sm font-bold border border-[#ffb74d]/30 transition-colors"
+                  title="Rotate +90°"
+                >
+                  90° ↻
+                </button>
               </div>
-              <div className="rounded-lg bg-white/5 px-2 py-2">
-                <div className="text-white/50">Y</div>
-                <div className="text-white">{selected ? selected.position.y.toFixed(2) : "--"}</div>
-              </div>
-              <div className="rounded-lg bg-white/5 px-2 py-2">
-                <div className="text-white/50">Z</div>
-                <div className="text-white">{selected ? selected.position.z.toFixed(2) : "--"}</div>
-              </div>
-            </div>
+            )}
+
+            {hasGroupsSelected && (
+              <button
+                onClick={() => ungroupItems(selectedIds)}
+                className="px-4 py-2 bg-[#3e2723] border-2 border-[#ffb74d] text-[#ffcc80] rounded-sm hover:bg-[#4e342e] transition-all font-semibold shadow-md"
+              >
+                Ungroup
+              </button>
+            )}
+
+            {!hasGroupsSelected && selectedIds.length > 1 && (
+              <button
+                onClick={() => useVenueStore.getState().groupItems(selectedIds)}
+                className="px-4 py-2 bg-[#3e2723] border-2 border-[#ffb74d] text-[#ffcc80] rounded-sm hover:bg-[#4e342e] transition-all font-semibold shadow-md"
+              >
+                Group
+              </button>
+            )}
+
+            {selectedIds.length > 0 && (
+              <button
+                onClick={() => removeItems(selectedIds)}
+                className="px-4 py-2 bg-[#3e2723] border-2 border-[#ef5350] text-[#ef9a9a] rounded-sm hover:bg-[#4e342e] transition-all font-semibold shadow-md"
+              >
+                Delete Selected ({selectedIds.length})
+              </button>
+            )}
           </div>
-          <div className="space-y-2">
-            <div className="text-xs uppercase tracking-[0.2em] text-white/50">Rotation</div>
-            <div className="rounded-lg bg-white/5 px-3 py-2 text-white">
-              {selected ? `${selected.rotationDeg.toFixed(1)} deg` : "--"}
-            </div>
-          </div>
-          <div className="space-y-2">
-            <div className="text-xs uppercase tracking-[0.2em] text-white/50">Camera</div>
-            <label className="flex items-center justify-between gap-3 text-xs text-white/70">
-              <span>FOV</span>
-              <input
-                type="range"
-                min={70}
-                max={110}
-                step={1}
-                value={fov}
-                onChange={(event) => setFov(Number(event.target.value))}
-                className="w-24 accent-sky-400"
+        </header>
+
+        {/* Bottom UI / Toolbar */}
+        <footer className="absolute bottom-0 left-0 right-0 flex flex-col items-center justify-end pb-4 pointer-events-none gap-4">
+          {/* ... Toolbar ... */}
+          {/* ... Toolbar ... */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-1 rounded-t-xl relative z-20 pointer-events-auto"
+            style={{
+              // Metaphor: This is the outer Gold Frame of the Plaque
+              background: 'linear-gradient(to bottom, #bf953f, #fcf6ba, #b38728, #fbf5b7, #aa771c)',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.8), 0 0 15px rgba(255, 215, 0, 0.3)'
+            }}
+          >
+            {/* Inner Wood Inlay */}
+            <div className="px-8 py-4 rounded-t-lg flex gap-6"
+              style={{
+                backgroundColor: '#1a0000', // Deepest Mahogany
+                backgroundImage: `
+                        repeating-linear-gradient(90deg, 
+                            rgba(255,255,255,0.03) 0px, 
+                            rgba(255,255,255,0.03) 1px, 
+                            transparent 1px, 
+                            transparent 40px),
+                        linear-gradient(to bottom, rgba(50,20,0,0.8), rgba(20,0,0,1))
+                    `,
+                boxShadow: 'inset 0 2px 20px rgba(0,0,0,1), inset 0 0 0 2px #3e2723'
+              }}
+            >
+              {/* Decorative Corner Ornaments (CSS pseudo-elements concept) */}
+              <div className="absolute top-2 left-3 w-3 h-3 rounded-full bg-[#fcf6ba] shadow-[0_2px_4px_rgba(0,0,0,0.5),inset_0_-2px_4px_rgba(184,134,11,1)]" />
+              <div className="absolute top-2 right-3 w-3 h-3 rounded-full bg-[#fcf6ba] shadow-[0_2px_4px_rgba(0,0,0,0.5),inset_0_-2px_4px_rgba(184,134,11,1)]" />
+
+              <ToolbarButton
+                label="Round Table"
+                onClick={() => handleAddItemRequest('round-table')}
+                onDragStart={() => setDraggedItem('round-table')}
               />
-              <span className="w-10 text-right text-white">{Math.round(fov)}</span>
-            </label>
-            <label className="flex items-center justify-between gap-3 text-xs text-white/70">
-              <span>Pan Speed</span>
-              <input
-                type="range"
-                min={0}
-                max={SPEED_PRESETS.length - 1}
-                step={1}
-                value={speedIndex}
-                onChange={(event) => setSpeedIndex(Number(event.target.value))}
-                className="w-24 accent-sky-400"
+              <ToolbarButton
+                label="Trestle Table"
+                onClick={() => addItem('trestle-table')}
+                onDragStart={() => setDraggedItem('trestle-table')}
               />
-              <span className="w-10 text-right text-white">{SPEED_PRESETS[speedIndex].label}</span>
-            </label>
+              <ToolbarButton
+                label="Chair"
+                onClick={() => setDraggedItem('chair')}
+                onDragStart={() => setDraggedItem('chair')}
+              />
+              <ToolbarButton
+                label="Platform"
+                onClick={() => addItem('platform')}
+                onDragStart={() => setDraggedItem('platform')}
+              />
+            </div>
+          </motion.div>
+
+          {/* TFT Style Trash Bin - Fits underneath */}
+          <div className="w-full pointer-events-auto relative z-10">
+            <TrashBin />
           </div>
-        </div>
+        </footer>
+
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-between gap-3 border-t border-white/10 bg-slate-900/70 px-4 py-2 text-xs text-white/70 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <span className="font-semibold text-white">Mode: {mode === "nav" ? "Nav" : "Edit"}</span>
-          <span>Snap: {snapOn ? "ON" : "OFF"}</span>
-          <span>Grid: {gridOn ? "ON" : "OFF"}</span>
-        </div>
-        <div className={warning ? "text-rose-200" : "text-white/60"}>
-          {warning ?? "All clear"}
-        </div>
-      </div>
+      {/* Modal Prompt */}
+      <AnimatePresence>
+        {chairPrompt && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-[#1a1f26] border border-white/10 p-6 rounded-2xl shadow-2xl w-80"
+            >
+              <h3 className="text-lg font-semibold text-white mb-4">Add Table Setup</h3>
+
+              <div className="mb-6">
+                <label className="block text-sm text-gray-400 mb-2">How many chairs?</label>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    value={chairCount}
+                    onChange={(e) => setChairCount(parseInt(e.target.value) || 0)}
+                    className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-[#6366f1]"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-2">Placed evenly around the table.</p>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleClosePrompt}
+                  className="flex-1 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmChairs}
+                  className="flex-1 px-4 py-2 rounded-lg bg-[#6366f1] hover:bg-[#4f46e5] text-white font-medium transition-colors"
+                >
+                  Place
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
-  );
+  )
 }
+
+const ToolbarButton = ({ label, onClick, onDragStart }: { label: string, onClick: () => void, onDragStart: () => void }) => (
+  <button
+    onPointerDown={(e) => {
+      // Only left click triggers drag
+      if (e.button === 0) onDragStart()
+    }}
+    onClick={onClick}
+    className="px-6 py-4 rounded-lg transition-transform active:scale-95 flex flex-col items-center gap-1 group touch-none select-none relative overflow-hidden shadow-[0_4px_8px_rgba(0,0,0,0.6)]"
+    style={{
+      // Button is a smaller plaque
+      background: 'linear-gradient(to bottom, #5d4037, #3e2723)',
+      border: '2px solid #b38728', // Gold border
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 4px rgba(0,0,0,0.5)'
+    }}
+  >
+    {/* Shine effect */}
+    <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+
+    <span className="text-xs font-bold text-[#ffd700] group-hover:text-white relative z-10 font-serif tracking-widest drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] uppercase border-b border-[#b38728]/30 pb-1">
+      {label}
+    </span>
+  </button>
+)
