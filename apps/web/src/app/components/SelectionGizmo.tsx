@@ -19,6 +19,7 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
     const pivotRef = useRef<THREE.Group>(null)
     const [gizmoVisible, setGizmoVisible] = useState(false)
     const pivotBaseY = useRef(0)
+    const initialYs = useRef<{ [id: string]: number }>({})
 
     // Store initial offsets relative to pivot when drag starts
     const initialPositions = useRef<{ [id: string]: THREE.Vector3 }>({})
@@ -120,6 +121,7 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                         initialPositions.current = {}
                         initialRotations.current = {}
                         pivotBaseY.current = pivotPos.y
+                        initialYs.current = {}
 
                         selectedIds.forEach(id => {
                             const obj = itemRefs.current[id]
@@ -128,6 +130,7 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                                 initialPositions.current[id] = obj.position.clone().sub(pivotPos)
                                 // Store initial rotation
                                 initialRotations.current[id] = obj.rotation.clone()
+                                initialYs.current[id] = obj.position.y
                             }
                         })
                     }}
@@ -163,6 +166,10 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                                     // Translate Mode
                                     obj.position.copy(newPivotPos).add(offset)
                                 }
+
+                                if (initialYs.current[id] !== undefined) {
+                                    obj.position.y = initialYs.current[id]
+                                }
                             }
                         })
 
@@ -183,6 +190,7 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                             selectedIds.forEach(id => {
                                 const obj = itemRefs.current[id]
                                 if (obj) obj.position.y += adjustY
+                                if (initialYs.current[id] !== undefined) initialYs.current[id] += adjustY
                             })
                         }
                     }}
