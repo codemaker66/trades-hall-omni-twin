@@ -64,7 +64,7 @@ export const useVenueStore = create<VenueState>((set) => ({
             groupId, // Optional group ID
             type,
             position,
-            rotation: rotation ?? (type === 'chair' ? [0, Math.PI, 0] : [0, 0, 0])
+            rotation: rotation ?? (type === 'chair' ? [0, -Math.PI / 2, 0] : [0, 0, 0])
         }],
         selectedIds: []
     })),

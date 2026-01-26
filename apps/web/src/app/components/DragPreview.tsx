@@ -21,7 +21,8 @@ export const DragPreview = () => {
     })
     const [previewPositions, setPreviewPositions] = useState<[number, number, number][]>([])
     const [position, setPosition] = useState<[number, number, number] | null>(null)
-    const [chairRotation, setChairRotation] = useState(Math.PI)
+    const defaultChairRotation = -Math.PI / 2
+    const [chairRotation, setChairRotation] = useState(defaultChairRotation)
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0) // Floor plane at y=0
 
     const { camera, raycaster, pointer, scene, gl } = useThree()
@@ -35,7 +36,7 @@ export const DragPreview = () => {
 
     useEffect(() => {
         objectBounds.current.ready = false
-        if (draggedItemType === 'chair') setChairRotation(Math.PI)
+        if (draggedItemType === 'chair') setChairRotation(defaultChairRotation)
         else setChairRotation(0)
     }, [draggedItemType])
 
@@ -234,9 +235,23 @@ export const DragPreview = () => {
             applyGhostMaterials(groupRef.current)
         }
 
+        const cancelChairTool = () => {
+            areaDragRef.current.active = false
+            areaDragRef.current.start = null
+            areaDragRef.current.end = null
+            setPreviewPositions([])
+            setPosition(null)
+            setDraggedItem(null)
+        }
+
         const handleKeyDown = (e: KeyboardEvent) => {
             if (draggedItemType !== 'chair') return
             const key = e.key.toLowerCase()
+            if (key === 'escape') {
+                e.preventDefault()
+                cancelChairTool()
+                return
+            }
             if (key !== 'q' && key !== 'e') return
             e.preventDefault()
             const step = Math.PI / 2
@@ -245,6 +260,11 @@ export const DragPreview = () => {
 
         const handlePointerDown = (e: PointerEvent) => {
             if (draggedItemType !== 'chair') return
+            if (e.button === 2) {
+                e.preventDefault()
+                cancelChairTool()
+                return
+            }
             if (e.button !== 0) return
             const isCanvas = (e.target as HTMLElement).nodeName === 'CANVAS'
             if (!isCanvas) return
@@ -329,14 +349,22 @@ export const DragPreview = () => {
             }
         }
 
+        const handleContextMenu = (e: MouseEvent) => {
+            if (draggedItemType !== 'chair') return
+            e.preventDefault()
+            cancelChairTool()
+        }
+
         const element = gl.domElement
         element.addEventListener('pointerdown', handlePointerDown)
         element.addEventListener('pointermove', handlePointerMove)
+        element.addEventListener('contextmenu', handleContextMenu)
         window.addEventListener('keydown', handleKeyDown)
         window.addEventListener('pointerup', handlePointerUp)
         return () => {
             element.removeEventListener('pointerdown', handlePointerDown)
             element.removeEventListener('pointermove', handlePointerMove)
+            element.removeEventListener('contextmenu', handleContextMenu)
             window.removeEventListener('keydown', handleKeyDown)
             window.removeEventListener('pointerup', handlePointerUp)
         }
