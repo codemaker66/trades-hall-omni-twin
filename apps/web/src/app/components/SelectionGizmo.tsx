@@ -113,7 +113,6 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                     mode={transformMode}
                     showY={false} // Lock vertical movement
                     size={1.2} // Slightly larger
-                    translationSnap={snappingEnabled ? snapGrid : null}
                     rotationSnap={snappingEnabled ? Math.PI / 4 : null}
 
                     onMouseDown={() => {
@@ -160,6 +159,11 @@ export const SelectionGizmo = ({ itemRefs }: SelectionGizmoProps) => {
                             const adjustY = -minBottom
                             pivotRef.current.position.y += adjustY
                             pivotBaseY.current = pivotRef.current.position.y
+                        }
+
+                        if (transformMode === 'translate' && snappingEnabled && snapGrid > 0) {
+                            pivotRef.current.position.x = Math.round(pivotRef.current.position.x / snapGrid) * snapGrid
+                            pivotRef.current.position.z = Math.round(pivotRef.current.position.z / snapGrid) * snapGrid
                         }
                         const newPivotPos = pivotRef.current.position
                         const pivotRotY = pivotRef.current.rotation.y
