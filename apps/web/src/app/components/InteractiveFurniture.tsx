@@ -38,6 +38,7 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
     const groupRef = useRef<THREE.Group>(null)
     const objectBounds = useRef({ centerY: 0, bottomOffset: 0, halfX: 0, halfZ: 0, ready: false })
     const stackRayOriginY = 50
+    const selectionBottomOffsets = useRef<{ [id: string]: number }>({})
 
     // Register ref with parent on mount
     useEffect(() => {
@@ -106,6 +107,17 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                 isDraggingRef.current = true
                 setIsDragging(true)
                 ensureObjectBounds()
+                const state = useVenueStore.getState()
+                selectionBottomOffsets.current = {}
+
+                if (state.selectedIds.length > 1) {
+                    state.selectedIds.forEach((selectedId) => {
+                        const obj = scene.getObjectByProperty('userData.id', selectedId)
+                        if (!obj) return
+                        const box = new THREE.Box3().setFromObject(obj)
+                        selectionBottomOffsets.current[selectedId] = box.isEmpty() ? 0 : obj.position.y - box.min.y
+                    })
+                }
 
                 // Calculate Drag Offset relative to the Floor Plane (Y=0)
                 // This prevents "jumping" when we start dragging from a non-zero height (like on a stack)
@@ -159,63 +171,115 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                             finalZ = Math.round(finalZ / snapGrid) * snapGrid
                         }
 
-                        // 3. Logic: Height Calculation via Downward Raycast (Lego Physics)
-                        let targetY = 0
-                        ensureObjectBounds()
-
                         const downRay = new THREE.Raycaster()
                         const downDir = new THREE.Vector3(0, -1, 0)
                         const rayOrigin = new THREE.Vector3()
-                        const originY = type === 'chair'
-                            ? (groupRef.current?.position.y ?? position[1]) + objectBounds.current.centerY
-                            : stackRayOriginY
 
-                        rayOrigin.set(finalX, originY, finalZ)
-                        downRay.set(rayOrigin, downDir)
+                        let deltaY = 0
+                        const selectedItems = state.items.filter(i => state.selectedIds.includes(i.id))
 
-                        const downIntersects = downRay.intersectObjects(scene.children, true)
+                        if (selectedItems.length > 1) {
+                            const anchor = selectedItems.reduce((lowest, item) => {
+                                const lowestOffset = selectionBottomOffsets.current[lowest.id] ?? 0
+                                const itemOffset = selectionBottomOffsets.current[item.id] ?? 0
+                                const lowestBottom = lowest.position[1] - lowestOffset
+                                const itemBottom = item.position[1] - itemOffset
+                                if (itemBottom === lowestBottom && item.type === 'platform') return item
+                                return itemBottom < lowestBottom ? item : lowest
+                            }, selectedItems[0])
 
-                        for (const hit of downIntersects) {
-                            // Ignore self or selection
-                            let current: THREE.Object3D | null = hit.object
-                            let rootGroup: THREE.Object3D | null = null
+                            const anchorCandidateX = anchor.position[0] + (finalX - position[0])
+                            const anchorCandidateZ = anchor.position[2] + (finalZ - position[2])
+                            const anchorOffset = selectionBottomOffsets.current[anchor.id] ?? 0
 
-                            while (current) {
-                                if (current.userData && current.userData.id) {
-                                    rootGroup = current
-                                    break
+                            rayOrigin.set(anchorCandidateX, stackRayOriginY, anchorCandidateZ)
+                            downRay.set(rayOrigin, downDir)
+
+                            let targetY = 0
+                            const downIntersects = downRay.intersectObjects(scene.children, true)
+                            for (const hit of downIntersects) {
+                                let current: THREE.Object3D | null = hit.object
+                                let rootGroup: THREE.Object3D | null = null
+
+                                while (current) {
+                                    if (current.userData && current.userData.id) {
+                                        rootGroup = current
+                                        break
+                                    }
+                                    current = current.parent
                                 }
-                                current = current.parent
+
+                                if (!rootGroup || !rootGroup.userData.id) continue
+                                if (state.selectedIds.includes(rootGroup.userData.id)) continue
+
+                                const hitItem = state.items.find(i => i.id === rootGroup!.userData.id)
+                                if (!hitItem) continue
+
+                                if (anchor.type === 'platform' && hitItem.type !== 'platform') continue
+                                if (anchor.type !== 'platform' && hitItem.type !== 'platform') continue
+
+                                targetY = hit.point.y
+                                break
                             }
 
-                            if (!rootGroup || !rootGroup.userData.id) continue
-                            if (rootGroup === groupRef.current) continue
-                            if (state.selectedIds.includes(rootGroup.userData.id)) continue
+                            const finalAnchorY = targetY + anchorOffset
+                            deltaY = finalAnchorY - anchor.position[1]
+                        } else {
+                            // 3. Logic: Height Calculation via Downward Raycast (Lego Physics)
+                            let targetY = 0
+                            ensureObjectBounds()
 
-                            const hitItem = state.items.find(i => i.id === rootGroup!.userData.id)
-                            if (!hitItem) continue
+                            const originY = type === 'chair'
+                                ? (groupRef.current?.position.y ?? position[1]) + objectBounds.current.centerY
+                                : stackRayOriginY
 
-                            if (type === 'platform' && hitItem.type !== 'platform') continue
-                            if (type !== 'platform' && hitItem.type !== 'platform') continue
+                            rayOrigin.set(finalX, originY, finalZ)
+                            downRay.set(rayOrigin, downDir)
 
-                            targetY = hit.point.y
-                            break // Closest valid surface for this ray
-                        }
+                            const downIntersects = downRay.intersectObjects(scene.children, true)
 
-                        // 4. Apply offset
-                        let finalY = targetY
-                        if (type === 'chair' || type === 'platform') {
-                            finalY += objectBounds.current.bottomOffset
+                            for (const hit of downIntersects) {
+                                // Ignore self or selection
+                                let current: THREE.Object3D | null = hit.object
+                                let rootGroup: THREE.Object3D | null = null
+
+                                while (current) {
+                                    if (current.userData && current.userData.id) {
+                                        rootGroup = current
+                                        break
+                                    }
+                                    current = current.parent
+                                }
+
+                                if (!rootGroup || !rootGroup.userData.id) continue
+                                if (rootGroup === groupRef.current) continue
+                                if (state.selectedIds.includes(rootGroup.userData.id)) continue
+
+                                const hitItem = state.items.find(i => i.id === rootGroup!.userData.id)
+                                if (!hitItem) continue
+
+                                if (type === 'platform' && hitItem.type !== 'platform') continue
+                                if (type !== 'platform' && hitItem.type !== 'platform') continue
+
+                                targetY = hit.point.y
+                                break // Closest valid surface for this ray
+                            }
+
+                            // 4. Apply offset
+                            let finalY = targetY
+                            if (type === 'chair' || type === 'platform') {
+                                finalY += objectBounds.current.bottomOffset
+                            }
+
+                            deltaY = finalY - position[1]
                         }
 
                         // 5. Update Store
                         const deltaX = finalX - position[0]
-                        const deltaY = finalY - position[1] // Absolute set logic
                         const deltaZ = finalZ - position[2]
 
                         if (Math.abs(deltaX) < 0.001 && Math.abs(deltaZ) < 0.001 && Math.abs(deltaY) < 0.001) return
 
-                        const selectedItems = state.items.filter(i => state.selectedIds.includes(i.id))
                         const updates = selectedItems.map(item => {
                             // Maintain relative Y structure? 
                             // Or Flatten? "Stacking" implies flattening onto the target.
