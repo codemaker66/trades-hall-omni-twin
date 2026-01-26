@@ -39,6 +39,8 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
     const objectBounds = useRef({ centerY: 0, bottomOffset: 0, halfX: 0, halfZ: 0, ready: false })
     const stackRayOriginY = 50
     const selectionBottomOffsets = useRef<{ [id: string]: number }>({})
+    const trestleDims = { length: 1.8, depth: 0.76 }
+    const trestleSnap = { along: 0.25, across: 0.12, angleCos: Math.cos(THREE.MathUtils.degToRad(6)) }
 
     // Register ref with parent on mount
     useEffect(() => {
@@ -48,6 +50,16 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
     }, [id, onRegister])
 
     const openChairPrompt = useVenueStore((state) => state.openChairPrompt)
+    const boxesOverlap = (a: THREE.Box3, b: THREE.Box3, eps = 0.001) => {
+        return (
+            a.max.x > b.min.x + eps &&
+            a.min.x < b.max.x - eps &&
+            a.max.y > b.min.y + eps &&
+            a.min.y < b.max.y - eps &&
+            a.max.z > b.min.z + eps &&
+            a.min.z < b.max.z - eps
+        )
+    }
     const ensureObjectBounds = () => {
         if (objectBounds.current.ready || !groupRef.current) return
 
@@ -178,6 +190,45 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                         let deltaY = 0
                         const selectedItems = state.items.filter(i => state.selectedIds.includes(i.id))
 
+                        if (type === 'trestle-table' && selectedItems.length === 1) {
+                            const longAxis = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), rotation[1]).normalize()
+                            const shortAxis = new THREE.Vector3(-longAxis.z, 0, longAxis.x)
+                            const selfPos = new THREE.Vector3(finalX, 0, finalZ)
+                            let bestSnap: { x: number, z: number, score: number } | null = null
+
+                            state.items.forEach((item) => {
+                                if (item.id === id || item.type !== 'trestle-table') return
+
+                                const otherAxis = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), item.rotation[1]).normalize()
+                                if (Math.abs(longAxis.dot(otherAxis)) < trestleSnap.angleCos) return
+
+                                const otherShort = new THREE.Vector3(-otherAxis.z, 0, otherAxis.x)
+                                const delta = new THREE.Vector3(selfPos.x - item.position[0], 0, selfPos.z - item.position[2])
+                                const along = delta.dot(otherAxis)
+                                const across = delta.dot(otherShort)
+                                const alongErr = Math.abs(Math.abs(along) - trestleDims.length)
+                                const acrossErr = Math.abs(across)
+
+                                if (alongErr > trestleSnap.along || acrossErr > trestleSnap.across) return
+
+                                const sign = along >= 0 ? 1 : -1
+                                const snapPos = new THREE.Vector3(
+                                    item.position[0] + otherAxis.x * trestleDims.length * sign,
+                                    0,
+                                    item.position[2] + otherAxis.z * trestleDims.length * sign
+                                )
+                                const score = alongErr + acrossErr
+                                if (!bestSnap || score < bestSnap.score) {
+                                    bestSnap = { x: snapPos.x, z: snapPos.z, score }
+                                }
+                            })
+
+                            if (bestSnap) {
+                                finalX = bestSnap.x
+                                finalZ = bestSnap.z
+                            }
+                        }
+
                         if (selectedItems.length > 1) {
                             const anchor = selectedItems.reduce((lowest, item) => {
                                 const lowestOffset = selectionBottomOffsets.current[lowest.id] ?? 0
@@ -279,6 +330,26 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                         const deltaZ = finalZ - position[2]
 
                         if (Math.abs(deltaX) < 0.001 && Math.abs(deltaZ) < 0.001 && Math.abs(deltaY) < 0.001) return
+
+                        const movingTrestles = selectedItems.filter(item => item.type === 'trestle-table')
+                        if (movingTrestles.length > 0) {
+                            const others = state.items.filter(item => item.type === 'trestle-table' && !state.selectedIds.includes(item.id))
+                            const deltaVec = new THREE.Vector3(deltaX, deltaY, deltaZ)
+
+                            for (const moving of movingTrestles) {
+                                const movingObj = scene.getObjectByProperty('userData.id', moving.id)
+                                if (!movingObj) continue
+                                const movingBox = new THREE.Box3().setFromObject(movingObj).translate(deltaVec)
+
+                                for (const other of others) {
+                                    const otherObj = scene.getObjectByProperty('userData.id', other.id)
+                                    if (!otherObj) continue
+                                    const otherBox = new THREE.Box3().setFromObject(otherObj)
+
+                                    if (boxesOverlap(movingBox, otherBox)) return
+                                }
+                            }
+                        }
 
                         const updates = selectedItems.map(item => {
                             // Maintain relative Y structure? 
