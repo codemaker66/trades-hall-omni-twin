@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { useVenueStore, FurnitureType } from '../../store'
 import { RoundTable6ft, TrestleTable6ft, Chair, Platform } from './Furniture'
 import * as THREE from 'three'
@@ -50,6 +50,7 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
     }, [id, onRegister])
 
     const openChairPrompt = useVenueStore((state) => state.openChairPrompt)
+    const [selectionBounds, setSelectionBounds] = useState<{ center: THREE.Vector3, size: THREE.Vector3 } | null>(null)
     const boxesOverlap = (a: THREE.Box3, b: THREE.Box3, eps = 0.001) => {
         return (
             a.max.x > b.min.x + eps &&
@@ -66,6 +67,7 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
         const inv = root.matrixWorld.clone().invert()
 
         root.traverse((obj) => {
+            if (obj.userData?.skipBounds) return
             const mesh = obj as THREE.Mesh
             if (!mesh.isMesh || !mesh.geometry) return
             const geom = mesh.geometry
@@ -79,6 +81,23 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
 
         return box
     }
+
+    useEffect(() => {
+        if (!isSelected || !groupRef.current) {
+            setSelectionBounds(null)
+            return
+        }
+
+        const box = getLocalBounds(groupRef.current)
+        if (box.isEmpty()) return
+
+        const center = new THREE.Vector3()
+        const size = new THREE.Vector3()
+        box.getCenter(center)
+        box.getSize(size)
+
+        setSelectionBounds({ center, size })
+    }, [isSelected, type])
     const ensureObjectBounds = () => {
         if (objectBounds.current.ready || !groupRef.current) return
 
@@ -447,11 +466,32 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
             <Component />
 
             {/* Visual Feedback for Selection */}
-            {isSelected && (
-                <mesh position={[0, 1.5, 0]} raycast={() => null}>
-                    <sphereGeometry args={[0.1]} />
-                    <meshBasicMaterial color="#6366f1" transparent opacity={0.5} />
-                </mesh>
+            {isSelected && selectionBounds && (
+                <group position={[selectionBounds.center.x, selectionBounds.center.y, selectionBounds.center.z]} userData={{ skipBounds: true }}>
+                    <mesh raycast={() => null}>
+                        <boxGeometry args={[
+                            selectionBounds.size.x * 1.03,
+                            selectionBounds.size.y * 1.03,
+                            selectionBounds.size.z * 1.03
+                        ]} />
+                        <meshStandardMaterial
+                            color="#8b7bff"
+                            emissive="#8b7bff"
+                            emissiveIntensity={0.9}
+                            transparent
+                            opacity={0.12}
+                            depthWrite={false}
+                        />
+                    </mesh>
+                    <lineSegments raycast={() => null}>
+                        <edgesGeometry args={[new THREE.BoxGeometry(
+                            selectionBounds.size.x * 1.05,
+                            selectionBounds.size.y * 1.05,
+                            selectionBounds.size.z * 1.05
+                        )]} />
+                        <lineBasicMaterial color="#b7abff" transparent opacity={0.95} />
+                    </lineSegments>
+                </group>
             )}
         </group>
     )
