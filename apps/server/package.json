@@ -1,0 +1,27 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@omni-twin/types": "*",
+    "@omni-twin/config": "*",
+    "@omni-twin/db": "*",
+    "@omni-twin/cache": "*",
+    "@omni-twin/shared": "*",
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.7.0",
+    "argon2": "^0.41.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
