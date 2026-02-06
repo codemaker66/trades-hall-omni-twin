@@ -25,44 +25,44 @@
 - [x] `packages/db/` with Drizzle ORM schema
 
 ### 1.2 Database Schema
-- [x] `users` table (id, email, name, passwordHash, avatarUrl, timestamps)
+- [x] `users` table (id, email, name, role, passwordHash, avatarUrl, onboarding, preferences, timestamps)
 - [x] `sessions` table (id, userId, expiresAt)
 - [x] `oauth_accounts` table (provider, providerAccountId, tokens)
-- [x] `venues` table (id, name, ownerId, timestamps, archivedAt)
+- [x] `venues` table (id, name, slug, description, address, lat/lng, capacity, sqft, type, pricing, amenities, images, status)
 - [x] `venue_permissions` table (venueId, userId, role)
 - [x] `venue_events` table (event sourcing — id, venueId, version, type, payload, userId, timestamp)
 - [x] `venue_snapshots` table (venueId, version, state)
-- [ ] `floor_plans` table (id, venueId, name, version, dimensions, objects JSONB, is_template)
-- [ ] `events` table (bookings — id, venueId, organizerId, name, type, dates, guest_count, status, floor_plan_id)
-- [ ] `proposals` table (id, eventId, venueId, status, pricing, message, valid_until)
-- [ ] `bookings` table (id, eventId, venueId, proposalId, status, amounts, contract)
-- [ ] `furniture_catalog` table (id, name, category, model_url, dimensions, capacity, stackable)
+- [x] `floor_plans` table (id, venueId, name, version, dimensions, objects JSONB, is_template)
+- [x] `occasions` table (bookings — id, venueId, organizerId, name, type, dates, guest_count, status, floor_plan_id)
+- [x] `proposals` table (id, occasionId, venueId, status, pricing, message, valid_until)
+- [x] `bookings` table (id, occasionId, venueId, proposalId, status, amounts, contract)
+- [x] `furniture_catalog` table (id, name, category, model_url, dimensions, capacity, stackable)
 
 ### 1.3 Authentication & Authorization
 - [x] Auth routes (register, login, logout, me)
 - [x] Password hashing (argon2)
 - [x] Session management (cookie-based)
 - [x] Roles defined in DB (owner, editor, viewer, commenter)
-- [ ] RBAC middleware protecting API routes by role
+- [x] RBAC middleware: `requireRole()` for global roles, `requireVenueAccess()` for venue permissions
 - [ ] Invite system (owners invite managers, planners share view-only links)
 
 ### 1.4 API Layer
 - [x] Share snapshot API (POST /api/share)
-- [ ] CRUD: venues
-- [ ] CRUD: floor_plans
-- [ ] CRUD: events (bookings)
+- [x] CRUD: venues (GET list, POST create, GET detail, PATCH update, DELETE archive)
+- [x] CRUD: floor_plans (GET list, POST create, GET detail, PATCH update, DELETE)
+- [x] CRUD: occasions (GET list, POST create, GET detail, PATCH update, PATCH status, DELETE)
 - [ ] CRUD: proposals
 - [ ] CRUD: bookings
-- [ ] CRUD: furniture_catalog
-- [ ] Zod validation schemas (shared client/server)
-- [ ] Consistent error response format
+- [x] CRUD: furniture_catalog (GET list, POST create, GET detail, PATCH update, DELETE)
+- [x] Zod validation schemas (shared client/server in @omni-twin/shared)
+- [x] Consistent error response format (parseBody + isResponse helper)
 - [ ] Rate limiting on public endpoints
 
 ### 1.5 Tests for Phase 1
 - [x] Engine unit tests (182 tests — command-validator, projector, handler, undo, ECS)
-- [ ] Zod schema unit tests
-- [ ] API route integration tests (CRUD operations)
-- [ ] Database migration tests (up/down)
+- [x] Zod schema unit tests (29 tests — venues, floor plans, occasions, catalog)
+- [ ] API route integration tests (CRUD operations — needs running PostgreSQL)
+- [ ] Database migration tests (up/down — needs running PostgreSQL)
 
 ---
 
@@ -314,3 +314,4 @@
 | Date | Phase | Work Done |
 |------|-------|-----------|
 | 2026-02-06 | Pre-Flight | Codebase inventory, STATUS.md, PROGRESS.md, stack assessment |
+| 2026-02-06 | Phase 1 | DB schema (5 new tables + enhanced venues/users), RBAC middleware, CRUD API routes (4 domains), Zod schemas, 29 schema tests |
