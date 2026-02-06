@@ -89,8 +89,8 @@ export function EditorToolbar() {
         </button>
       </div>
 
-      {/* Center: Metrics */}
-      <div className="flex items-center gap-4 text-xs text-surface-60">
+      {/* Center: Metrics (live region for screen readers) */}
+      <div className="flex items-center gap-4 text-xs text-surface-60" aria-live="polite" aria-atomic="true">
         <span>Chairs: <strong className="text-surface-90">{metrics.chairs}</strong></span>
         <span>Tables: <strong className="text-surface-90">{metrics.tables}</strong></span>
         <span>Seats: <strong className="text-gold-50">{metrics.totalSeats}</strong></span>
