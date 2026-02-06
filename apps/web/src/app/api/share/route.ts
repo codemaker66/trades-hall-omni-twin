@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'node:crypto'
+import { getShareSnapshotStore } from './shareStore'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -9,13 +11,7 @@ const MAX_SNAPSHOTS = 2000
 const CODE_LENGTH = 8
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
-type ShareSnapshot = {
-  payload: string
-  createdAt: number
-  expiresAt: number
-}
-
-const snapshots = new Map<string, ShareSnapshot>()
+const shareSnapshotStore = getShareSnapshotStore()
 
 const jsonNoStore = (body: unknown, init?: ResponseInit) =>
   NextResponse.json(body, {
@@ -28,50 +24,31 @@ const jsonNoStore = (body: unknown, init?: ResponseInit) =>
 
 const nowMs = () => Date.now()
 
-const purgeExpiredSnapshots = () => {
-  const now = nowMs()
-  for (const [code, snapshot] of snapshots) {
-    if (snapshot.expiresAt <= now) {
-      snapshots.delete(code)
-    }
-  }
-}
-
 const createSnapshotCode = (): string => {
-  let code = ''
-  for (let i = 0; i < CODE_LENGTH; i += 1) {
-    const idx = Math.floor(Math.random() * CODE_ALPHABET.length)
-    code += CODE_ALPHABET[idx]
-  }
-  return code
+  const bytes = randomBytes(CODE_LENGTH)
+  return [...bytes]
+    .map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length])
+    .join('')
 }
 
-const createUniqueSnapshotCode = (): string => {
+const createUniqueSnapshotCode = async (): Promise<string> => {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const code = createSnapshotCode()
-    if (!snapshots.has(code)) {
+    if (!(await shareSnapshotStore.has(code))) {
       return code
     }
   }
 
   while (true) {
     const code = createSnapshotCode()
-    if (!snapshots.has(code)) {
+    if (!(await shareSnapshotStore.has(code))) {
       return code
     }
   }
 }
 
-const evictOldestSnapshotIfNeeded = () => {
-  if (snapshots.size < MAX_SNAPSHOTS) return
-  const oldest = snapshots.keys().next()
-  if (!oldest.done) {
-    snapshots.delete(oldest.value)
-  }
-}
-
 export async function POST(request: NextRequest) {
-  purgeExpiredSnapshots()
+  await shareSnapshotStore.purgeExpired(nowMs())
 
   let body: unknown
   try {
@@ -93,13 +70,13 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  evictOldestSnapshotIfNeeded()
+  await shareSnapshotStore.evictOldest(MAX_SNAPSHOTS)
 
   const createdAt = nowMs()
   const expiresAt = createdAt + SNAPSHOT_TTL_MS
-  const code = createUniqueSnapshotCode()
+  const code = await createUniqueSnapshotCode()
 
-  snapshots.set(code, {
+  await shareSnapshotStore.set(code, {
     payload,
     createdAt,
     expiresAt
@@ -112,8 +89,8 @@ export async function POST(request: NextRequest) {
   })
 }
 
-export function GET(request: NextRequest) {
-  purgeExpiredSnapshots()
+export async function GET(request: NextRequest) {
+  await shareSnapshotStore.purgeExpired(nowMs())
 
   const rawCode = request.nextUrl.searchParams.get('code')
   if (!rawCode) {
@@ -125,13 +102,13 @@ export function GET(request: NextRequest) {
     return jsonNoStore({ error: 'Invalid share code.' }, { status: 400 })
   }
 
-  const snapshot = snapshots.get(code)
+  const snapshot = await shareSnapshotStore.get(code)
   if (!snapshot) {
     return jsonNoStore({ error: 'Share code not found or expired.' }, { status: 404 })
   }
 
   if (snapshot.expiresAt <= nowMs()) {
-    snapshots.delete(code)
+    await shareSnapshotStore.delete(code)
     return jsonNoStore({ error: 'Share code not found or expired.' }, { status: 404 })
   }
 
