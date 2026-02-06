@@ -1,67 +1,132 @@
 @import "tailwindcss";
 
+/* =========================================================================
+   OmniTwin Design System
+   All colors referenced from config/theme.ts — mirrored here as CSS vars
+   for Tailwind consumption. No hardcoded colors in components.
+   ========================================================================= */
+
+@theme {
+  /* Surface scale (dark wood) */
+  --color-surface-0: #0b0f14;
+  --color-surface-5: #120a07;
+  --color-surface-10: #1a0f0a;
+  --color-surface-15: #1a110e;
+  --color-surface-20: #2d1b15;
+  --color-surface-25: #3e2723;
+  --color-surface-30: #4e342e;
+  --color-surface-40: #5d4037;
+  --color-surface-50: #6d4c41;
+  --color-surface-60: #795548;
+  --color-surface-70: #8d6e63;
+  --color-surface-80: #a1887f;
+  --color-surface-90: #d7ccc8;
+  --color-surface-95: #efebe9;
+
+  /* Gold/brass accent */
+  --color-gold-10: #aa771c;
+  --color-gold-20: #b38728;
+  --color-gold-30: #bf953f;
+  --color-gold-40: #d4af37;
+  --color-gold-50: #ffd700;
+  --color-gold-60: #ffb74d;
+  --color-gold-70: #ffcc80;
+  --color-gold-80: #fcf6ba;
+  --color-gold-90: #fbf5b7;
+
+  /* Indigo accent */
+  --color-indigo-40: #4f46e5;
+  --color-indigo-50: #6366f1;
+  --color-indigo-60: #8b7bff;
+  --color-indigo-70: #b7abff;
+  --color-indigo-80: #7c6fff;
+
+  /* Danger */
+  --color-danger-10: #3e1f1f;
+  --color-danger-20: #4a0a0a;
+  --color-danger-25: #2a0505;
+  --color-danger-30: #5e0d0d;
+  --color-danger-40: #8b0000;
+  --color-danger-50: #ef5350;
+  --color-danger-60: #ff3333;
+  --color-danger-70: #ef9a9a;
+  --color-danger-80: #ffcccc;
+
+  /* Success */
+  --color-success-10: #1f3324;
+  --color-success-50: #66bb6a;
+  --color-success-80: #b9f6ca;
+
+  /* Info */
+  --color-info-50: #4fc3f7;
+  --color-info-80: #b3e5fc;
+
+  /* Warning */
+  --color-warning-50: #ffb74d;
+
+  /* Legacy aliases for existing tailwind classes */
+  --color-deep-slate: #0b0f14;
+  --color-soft-clay: #1b2532;
+  --color-electric-indigo: #6366f1;
+  --color-sunset-coral: #f472b6;
+  --color-panel-glass: rgba(13, 18, 27, 0.85);
+
+  /* Typography */
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, monospace;
+}
+
+/* =========================================================================
+   Utility Classes
+   ========================================================================= */
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-panel-glass/80 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl;
+  }
+
+  .text-glow {
+    text-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+  }
+}
+
+/* =========================================================================
+   Base Styles
+   ========================================================================= */
+
 :root {
-  --background: #f6f1e8;
-  --foreground: #1f1b16;
-  --surface: #ffffff;
-  --surface-muted: #f2ece2;
-  --accent: #d36b3d;
-  --accent-2: #2d6f73;
+  --background: #0b0f14;
+  --foreground: #d7ccc8;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-surface: var(--surface);
-  --color-surface-muted: var(--surface-muted);
-  --color-accent: var(--accent);
-  --color-accent-2: var(--accent-2);
-  --font-sans: var(--font-body);
-  --font-serif: var(--font-display);
-}
-
+html,
 body {
-  min-height: 100%;
-  background:
-    radial-gradient(1200px 520px at 12% -10%, rgba(255, 204, 153, 0.55), rgba(255, 204, 153, 0)),
-    radial-gradient(1000px 620px at 88% 0%, rgba(165, 215, 230, 0.55), rgba(165, 215, 230, 0)),
-    linear-gradient(180deg, #fbf8f2 0%, #eef1f5 100%);
-  color: var(--foreground);
-  font-family: var(--font-body), "Segoe UI", Tahoma, sans-serif;
+  height: 100%;
+  margin: 0;
+  background-color: var(--color-surface-0);
 }
 
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Focus ring — visible on keyboard navigation, hidden on mouse click */
+*:focus-visible {
+  outline: 2px solid var(--color-indigo-50);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-@keyframes fade-soft {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 6px;
 }
 
-.anim-rise {
-  animation: rise-in 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+::-webkit-scrollbar-track {
+  background: var(--color-surface-5);
 }
 
-.anim-delay-1 {
-  animation-delay: 120ms;
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-40);
+  border-radius: 3px;
 }
 
-.anim-delay-2 {
-  animation-delay: 240ms;
-}
-
-.anim-fade {
-  animation: fade-soft 900ms ease-out both;
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-60);
 }
