@@ -2,7 +2,7 @@
 
 import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { Environment, ContactShadows, MapControls } from '@react-three/drei'
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import * as THREE from 'three'
 import { useFloorPlanStore } from './store'
 import { floorPlanTo3D, floorDimensions3D, type Scene3DItem } from './coordinateBridge'
@@ -89,6 +89,136 @@ function FloorPlane({ widthM, depthM }: { widthM: number; depthM: number }) {
       <planeGeometry args={[widthM, depthM]} />
       <meshStandardMaterial color="#2c1810" roughness={0.9} />
     </mesh>
+  )
+}
+
+// ─── InstancedMesh batches ────────────────────────────────────────────────────
+
+const _mat4 = new THREE.Matrix4()
+const _pos = new THREE.Vector3()
+const _quat = new THREE.Quaternion()
+const _scale = new THREE.Vector3(1, 1, 1)
+const _euler = new THREE.Euler()
+
+function setInstanceMatrix(
+  mesh: THREE.InstancedMesh,
+  index: number,
+  position: [number, number, number],
+  rotation: [number, number, number],
+  offset: [number, number, number] = [0, 0, 0],
+  scale: [number, number, number] = [1, 1, 1],
+) {
+  _euler.set(...rotation)
+  _quat.setFromEuler(_euler)
+  // Rotate the offset by the item's rotation
+  _pos.set(...offset).applyQuaternion(_quat).add(new THREE.Vector3(...position))
+  _scale.set(...scale)
+  _mat4.compose(_pos, _quat, _scale)
+  mesh.setMatrixAt(index, _mat4)
+}
+
+/**
+ * Batched InstancedMesh for chairs — renders seat, back, and 4 legs as separate instanced meshes.
+ * One draw call per sub-part (6 total) instead of one per chair (6N).
+ */
+function InstancedChairs({ items }: { items: Scene3DItem[] }) {
+  const seatRef = useRef<THREE.InstancedMesh>(null)
+  const backRef = useRef<THREE.InstancedMesh>(null)
+  const leg1Ref = useRef<THREE.InstancedMesh>(null)
+  const leg2Ref = useRef<THREE.InstancedMesh>(null)
+  const leg3Ref = useRef<THREE.InstancedMesh>(null)
+  const leg4Ref = useRef<THREE.InstancedMesh>(null)
+
+  useEffect(() => {
+    const count = items.length
+    for (let i = 0; i < count; i++) {
+      const item = items[i]!
+      const p = item.position
+      const r = item.rotation
+
+      if (seatRef.current) setInstanceMatrix(seatRef.current, i, p, r, [0, 0.45, 0])
+      if (backRef.current) setInstanceMatrix(backRef.current, i, p, r, [0, 0.7, -0.2])
+      if (leg1Ref.current) setInstanceMatrix(leg1Ref.current, i, p, r, [0.2, 0.225, 0.2])
+      if (leg2Ref.current) setInstanceMatrix(leg2Ref.current, i, p, r, [-0.2, 0.225, 0.2])
+      if (leg3Ref.current) setInstanceMatrix(leg3Ref.current, i, p, r, [0.2, 0.225, -0.2])
+      if (leg4Ref.current) setInstanceMatrix(leg4Ref.current, i, p, r, [-0.2, 0.225, -0.2])
+    }
+
+    for (const ref of [seatRef, backRef, leg1Ref, leg2Ref, leg3Ref, leg4Ref]) {
+      if (ref.current) ref.current.instanceMatrix.needsUpdate = true
+    }
+  }, [items])
+
+  if (items.length === 0) return null
+  const count = items.length
+
+  return (
+    <>
+      <instancedMesh ref={seatRef} args={[chairSeatGeom, chairFabricMat, count]} castShadow receiveShadow />
+      <instancedMesh ref={backRef} args={[chairBackGeom, chairFabricMat, count]} castShadow />
+      <instancedMesh ref={leg1Ref} args={[chairLegGeom, chairLegMat, count]} castShadow />
+      <instancedMesh ref={leg2Ref} args={[chairLegGeom, chairLegMat, count]} castShadow />
+      <instancedMesh ref={leg3Ref} args={[chairLegGeom, chairLegMat, count]} castShadow />
+      <instancedMesh ref={leg4Ref} args={[chairLegGeom, chairLegMat, count]} castShadow />
+    </>
+  )
+}
+
+/**
+ * Batched InstancedMesh for round tables — top + leg as separate instanced meshes.
+ */
+function InstancedRoundTables({ items }: { items: Scene3DItem[] }) {
+  const topRef = useRef<THREE.InstancedMesh>(null)
+  const legRef = useRef<THREE.InstancedMesh>(null)
+
+  useEffect(() => {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!
+      if (topRef.current) setInstanceMatrix(topRef.current, i, item.position, item.rotation, [0, 0.74, 0])
+      if (legRef.current) setInstanceMatrix(legRef.current, i, item.position, item.rotation, [0, 0.37, 0])
+    }
+    if (topRef.current) topRef.current.instanceMatrix.needsUpdate = true
+    if (legRef.current) legRef.current.instanceMatrix.needsUpdate = true
+  }, [items])
+
+  if (items.length === 0) return null
+
+  return (
+    <>
+      <instancedMesh ref={topRef} args={[roundTableTopGeom, whiteMat, items.length]} castShadow receiveShadow />
+      <instancedMesh ref={legRef} args={[roundTableLegGeom, darkLegMat, items.length]} castShadow />
+    </>
+  )
+}
+
+/**
+ * Batched InstancedMesh for trestle tables — top + 2 legs.
+ */
+function InstancedTrestleTables({ items }: { items: Scene3DItem[] }) {
+  const topRef = useRef<THREE.InstancedMesh>(null)
+  const leg1Ref = useRef<THREE.InstancedMesh>(null)
+  const leg2Ref = useRef<THREE.InstancedMesh>(null)
+
+  useEffect(() => {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!
+      if (topRef.current) setInstanceMatrix(topRef.current, i, item.position, item.rotation, [0, 0.74, 0])
+      if (leg1Ref.current) setInstanceMatrix(leg1Ref.current, i, item.position, item.rotation, [0.8, 0.37, 0])
+      if (leg2Ref.current) setInstanceMatrix(leg2Ref.current, i, item.position, item.rotation, [-0.8, 0.37, 0])
+    }
+    for (const ref of [topRef, leg1Ref, leg2Ref]) {
+      if (ref.current) ref.current.instanceMatrix.needsUpdate = true
+    }
+  }, [items])
+
+  if (items.length === 0) return null
+
+  return (
+    <>
+      <instancedMesh ref={topRef} args={[trestleTableTopGeom, whiteMat, items.length]} castShadow receiveShadow />
+      <instancedMesh ref={leg1Ref} args={[trestleTableLegGeom, darkLegMat, items.length]} castShadow />
+      <instancedMesh ref={leg2Ref} args={[trestleTableLegGeom, darkLegMat, items.length]} castShadow />
+    </>
   )
 }
 
@@ -212,6 +342,24 @@ export function Scene3DPreview({ width, height }: Scene3DPreviewProps) {
     [items, planWidthFt, planHeightFt],
   )
 
+  // Partition items by type for instanced rendering
+  const { chairs, roundTables, trestleTables, fallbackItems } = useMemo(() => {
+    const c: Scene3DItem[] = []
+    const rt: Scene3DItem[] = []
+    const tt: Scene3DItem[] = []
+    const fb: Scene3DItem[] = []
+    for (const item of items3D) {
+      switch (item.type) {
+        case 'chair': c.push(item); break
+        case 'round-table': rt.push(item); break
+        case 'trestle-table': tt.push(item); break
+        case 'platform': fb.push(item); break // platforms have varying scale, render individually
+        default: fb.push(item); break
+      }
+    }
+    return { chairs: c, roundTables: rt, trestleTables: tt, fallbackItems: fb }
+  }, [items3D])
+
   const floor = useMemo(
     () => floorDimensions3D(planWidthFt, planHeightFt),
     [planWidthFt, planHeightFt],
@@ -250,7 +398,13 @@ export function Scene3DPreview({ width, height }: Scene3DPreviewProps) {
 
         <FloorPlane widthM={floor.widthM} depthM={floor.depthM} />
 
-        {items3D.map((item) => (
+        {/* Instanced batches for common furniture types */}
+        <InstancedChairs items={chairs} />
+        <InstancedRoundTables items={roundTables} />
+        <InstancedTrestleTables items={trestleTables} />
+
+        {/* Individual rendering for platforms (varying scale) and fallback items */}
+        {fallbackItems.map((item) => (
           <PreviewItem key={item.id} item={item} />
         ))}
 
