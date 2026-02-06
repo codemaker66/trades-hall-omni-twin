@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { EditorToolbar } from './EditorToolbar'
 import { CatalogSidebar } from './CatalogSidebar'
 import { CapacityWarning } from './CapacityWarning'
+import { useEditorKeyboard } from './useEditorKeyboard'
 
 // Konva must be client-only (uses window)
 const Canvas2D = dynamic(() => import('./Canvas2D').then((m) => m.Canvas2D), { ssr: false })
@@ -21,6 +22,9 @@ export function FloorPlanEditor() {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 800, height: 600 })
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
+
+  // Global keyboard shortcuts (Tab cycle, arrow nudge, Del, R, Ctrl+Z/A/Esc)
+  useEditorKeyboard(viewMode === '2d')
 
   useEffect(() => {
     const el = containerRef.current
