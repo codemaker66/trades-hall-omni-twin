@@ -5,7 +5,7 @@ export const createFloorPlanSchema = z.object({
   widthFt: z.number().min(1).max(10000),
   heightFt: z.number().min(1).max(10000),
   backgroundImageUrl: z.string().url().optional(),
-  objects: z.array(z.record(z.unknown())).optional(),
+  objects: z.array(z.record(z.string(), z.unknown())).optional(),
   isTemplate: z.boolean().optional(),
 })
 
