@@ -4,7 +4,7 @@ import { Scene } from './Scene'
 import { TrashBin } from './TrashBin'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useVenueStore, FurnitureType } from '../../store'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 
 export default function VenueViewer() {
   const addItem = useVenueStore((state) => state.addItem)
@@ -18,22 +18,98 @@ export default function VenueViewer() {
   const transformMode = useVenueStore((state) => state.transformMode)
   const toggleTransformMode = useVenueStore((state) => state.toggleTransformMode)
   const rotateSelection = useVenueStore((state) => state.rotateSelection)
+  const canUndo = useVenueStore((state) => state.canUndo)
+  const canRedo = useVenueStore((state) => state.canRedo)
+  const undo = useVenueStore((state) => state.undo)
+  const redo = useVenueStore((state) => state.redo)
+  const beginHistoryBatch = useVenueStore((state) => state.beginHistoryBatch)
+  const endHistoryBatch = useVenueStore((state) => state.endHistoryBatch)
 
   const openChairPrompt = useVenueStore((state) => state.openChairPrompt)
   const closeChairPrompt = useVenueStore((state) => state.closeChairPrompt)
   const chairPrompt = useVenueStore((state) => state.chairPrompt)
+  const inventoryCatalog = useVenueStore((state) => state.inventoryCatalog)
+  const inventoryWarning = useVenueStore((state) => state.inventoryWarning)
+  const clearInventoryWarning = useVenueStore((state) => state.clearInventoryWarning)
+  const updateInventoryItem = useVenueStore((state) => state.updateInventoryItem)
+  const scenarios = useVenueStore((state) => state.scenarios)
+  const activeScenarioId = useVenueStore((state) => state.activeScenarioId)
+  const saveScenario = useVenueStore((state) => state.saveScenario)
+  const loadScenario = useVenueStore((state) => state.loadScenario)
+  const deleteScenario = useVenueStore((state) => state.deleteScenario)
+  const renameScenario = useVenueStore((state) => state.renameScenario)
+  const setScenarioStatus = useVenueStore((state) => state.setScenarioStatus)
+  const hasInventoryForType = useVenueStore((state) => state.hasInventoryForType)
+  const resetProject = useVenueStore((state) => state.resetProject)
 
   const [chairCount, setChairCount] = useState<number>(8)
+  const [scenarioName, setScenarioName] = useState('')
+
+  const inventoryUsage = useMemo(() => {
+    const usage: Record<FurnitureType, number> = {
+      'round-table': 0,
+      'trestle-table': 0,
+      'chair': 0,
+      'platform': 0
+    }
+
+    for (const item of items) {
+      usage[item.type] += 1
+    }
+
+    return usage
+  }, [items])
+
+  const layoutMetrics = useMemo(() => {
+    let tableCount = 0
+    let chairCount = 0
+    let platformCount = 0
+
+    for (const item of items) {
+      if (item.type === 'round-table' || item.type === 'trestle-table') tableCount += 1
+      if (item.type === 'chair') chairCount += 1
+      if (item.type === 'platform') platformCount += 1
+    }
+
+    return {
+      seatCount: chairCount,
+      tableCount,
+      chairCount,
+      platformCount
+    }
+  }, [items])
+
+  const canAddRoundTable = hasInventoryForType('round-table')
+  const canAddTrestleTable = hasInventoryForType('trestle-table')
+  const canAddChair = hasInventoryForType('chair')
+  const canAddPlatform = hasInventoryForType('platform')
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT') return
+      const target = e.target as HTMLElement | null
+      if (target?.isContentEditable) return
+      const tagName = target?.tagName
+      if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') return
 
       const key = e.key.toLowerCase()
       const draggedItemType = useVenueStore.getState().draggedItemType
       if ((key === 'q' || key === 'e') && draggedItemType === 'chair') return
 
-      if (key === 'q') {
+      const hasModifier = e.metaKey || e.ctrlKey
+      const isUndo = hasModifier && !e.shiftKey && key === 'z'
+      const isRedo = hasModifier && (key === 'y' || (e.shiftKey && key === 'z'))
+      const isSaveScenario = hasModifier && key === 's'
+
+      if (isUndo) {
+        e.preventDefault()
+        useVenueStore.getState().undo()
+      } else if (isRedo) {
+        e.preventDefault()
+        useVenueStore.getState().redo()
+      } else if (isSaveScenario) {
+        e.preventDefault()
+        useVenueStore.getState().saveScenario()
+      } else if (key === 'q') {
         useVenueStore.getState().rotateSelection(-90)
       } else if (key === 'e') {
         useVenueStore.getState().rotateSelection(90)
@@ -51,6 +127,10 @@ export default function VenueViewer() {
 
   const handleAddItemRequest = (type: FurnitureType) => {
     if (type === 'round-table') {
+      if (!canAddRoundTable) {
+        addItem('round-table', [0, 0, 0], [0, 0, 0], undefined, { recordHistory: false })
+        return
+      }
       openChairPrompt(type)
       setChairCount(5) // Default based on user request example
     } else {
@@ -58,54 +138,77 @@ export default function VenueViewer() {
     }
   }
 
+  const handleSaveScenario = () => {
+    saveScenario(scenarioName)
+    setScenarioName('')
+  }
+
+  const handleResetProject = () => {
+    const shouldReset = window.confirm('Reset this project? This clears layout, scenarios, and inventory customizations on this device.')
+    if (!shouldReset) return
+    resetProject()
+    setScenarioName('')
+  }
+
   const handleConfirmChairs = () => {
     if (!chairPrompt) return
 
-    const { tableId, type } = chairPrompt
+    const { tableId } = chairPrompt
+    beginHistoryBatch()
 
-    // If we are reconfiguring an existing table
-    if (tableId) {
-      const table = items.find(i => i.id === tableId)
-      if (table) {
-        // 1. Remove old items in the same group (chairs) but keep the table
-        const groupItems = items.filter(i => i.groupId === table.groupId && i.id !== tableId)
-        removeItems(groupItems.map(i => i.id))
+    try {
+      // If we are reconfiguring an existing table
+      if (tableId) {
+        const table = items.find(i => i.id === tableId)
+        if (table) {
+          // 1. Remove old items in the same group (chairs) but keep the table
+          const groupItems = items.filter(i => i.groupId === table.groupId && i.id !== tableId)
+          removeItems(groupItems.map(i => i.id), { recordHistory: false })
 
-        // 2. Add Chairs around existing table position
-        const radius = 1.3
-        const center = table.position
+          // 2. Add Chairs around existing table position
+          const radius = 1.3
+          const center = table.position
+          for (let i = 0; i < chairCount; i++) {
+            const angle = (i / chairCount) * Math.PI * 2
+            const x = center[0] + Math.sin(angle) * radius
+            const z = center[2] + Math.cos(angle) * radius
+            const rotY = angle + Math.PI
+            addItem('chair', [x, 0, z], [0, rotY, 0], table.groupId, { recordHistory: false })
+          }
+        }
+      } else {
+        // Standard new table + chairs placement
+        if (!hasInventoryForType('round-table')) {
+          addItem('round-table', [0, 0, 0], [0, 0, 0], undefined, { recordHistory: false })
+          closeChairPrompt()
+          return
+        }
+
+        // Create Group ID
+        const groupId = crypto.randomUUID()
+
+        // 1. Add the Round Table at center (for now)
+        const center: [number, number, number] = [0, 0, 0]
+        addItem('round-table', center, [0, 0, 0], groupId, { recordHistory: false })
+
+        // 2. Add Chairs evenly spaced
+        const radius = 1.3 // Distance from center (Table R ~0.9 + clearance)
         for (let i = 0; i < chairCount; i++) {
+          // Calculate angle
           const angle = (i / chairCount) * Math.PI * 2
+
+          // Position
           const x = center[0] + Math.sin(angle) * radius
           const z = center[2] + Math.cos(angle) * radius
+
+          // Rotation: Face Center
           const rotY = angle + Math.PI
-          addItem('chair', [x, 0, z], [0, rotY, 0], table.groupId)
+
+          addItem('chair', [x, 0, z], [0, rotY, 0], groupId, { recordHistory: false })
         }
       }
-    } else {
-      // Standard new table + chairs placement
-      // Create Group ID
-      const groupId = crypto.randomUUID()
-
-      // 1. Add the Round Table at center (for now)
-      const center: [number, number, number] = [0, 0, 0]
-      addItem('round-table', center, [0, 0, 0], groupId)
-
-      // 2. Add Chairs evenly spaced
-      const radius = 1.3 // Distance from center (Table R ~0.9 + clearance)
-      for (let i = 0; i < chairCount; i++) {
-        // Calculate angle
-        const angle = (i / chairCount) * Math.PI * 2
-
-        // Position
-        const x = center[0] + Math.sin(angle) * radius
-        const z = center[2] + Math.cos(angle) * radius
-
-        // Rotation: Face Center
-        const rotY = angle + Math.PI
-
-        addItem('chair', [x, 0, z], [0, rotY, 0], groupId)
-      }
+    } finally {
+      endHistoryBatch()
     }
 
     closeChairPrompt()
@@ -159,6 +262,28 @@ export default function VenueViewer() {
 
           {/* Top Right Tools */}
           <div className="flex gap-2 pointer-events-auto">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              className={`px-4 py-2 rounded-sm border-2 transition-all font-semibold shadow-md ${canUndo
+                ? 'bg-[#3e2723] border-[#8d6e63] text-[#d7ccc8] hover:bg-[#4e342e]'
+                : 'bg-[#1a0f0a]/70 border-[#2a1b16] text-[#5e4a43] cursor-not-allowed'
+                }`}
+            >
+              Undo
+            </button>
+
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              className={`px-4 py-2 rounded-sm border-2 transition-all font-semibold shadow-md ${canRedo
+                ? 'bg-[#3e2723] border-[#8d6e63] text-[#d7ccc8] hover:bg-[#4e342e]'
+                : 'bg-[#1a0f0a]/70 border-[#2a1b16] text-[#5e4a43] cursor-not-allowed'
+                }`}
+            >
+              Redo
+            </button>
+
             <button
               onClick={toggleSnapping}
               className={`px-4 py-2 rounded-sm border-2 transition-all font-semibold shadow-md ${snappingEnabled
@@ -243,6 +368,147 @@ export default function VenueViewer() {
           </div>
         </header>
 
+        <motion.aside
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.15 }}
+          className="absolute top-28 left-6 w-96 max-h-[calc(100dvh-190px)] overflow-y-auto border-2 border-[#3e2723] bg-[#1a0f0a]/90 p-4 rounded-sm shadow-2xl pointer-events-auto space-y-4"
+        >
+          <div>
+            <h2 className="text-sm font-bold tracking-wider text-[#d7ccc8] uppercase mb-2">Layout Metrics</h2>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="bg-[#2d1b15] border border-[#5d4037] rounded-sm px-3 py-2 text-[#d7ccc8]">Seats: {layoutMetrics.seatCount}</div>
+              <div className="bg-[#2d1b15] border border-[#5d4037] rounded-sm px-3 py-2 text-[#d7ccc8]">Tables: {layoutMetrics.tableCount}</div>
+              <div className="bg-[#2d1b15] border border-[#5d4037] rounded-sm px-3 py-2 text-[#d7ccc8]">Chairs: {layoutMetrics.chairCount}</div>
+              <div className="bg-[#2d1b15] border border-[#5d4037] rounded-sm px-3 py-2 text-[#d7ccc8]">Platforms: {layoutMetrics.platformCount}</div>
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-sm font-bold tracking-wider text-[#d7ccc8] uppercase mb-2">Inventory</h2>
+            <div className="space-y-2">
+              {inventoryCatalog.map((inventoryItem) => {
+                const used = inventoryUsage[inventoryItem.furnitureType]
+                const available = Math.max(0, inventoryItem.quantityTotal - inventoryItem.quantityReserved)
+                const usageRatio = available > 0 ? used / available : 1
+                const ratio = Math.min(1, usageRatio)
+                const barColor = usageRatio > 1 ? 'bg-[#ef5350]' : usageRatio > 0.8 ? 'bg-[#ffb74d]' : 'bg-[#66bb6a]'
+
+                return (
+                  <div key={inventoryItem.id} className="bg-[#2d1b15] border border-[#5d4037] rounded-sm p-2">
+                    <div className="flex items-center justify-between text-xs text-[#d7ccc8] mb-1">
+                      <span>{inventoryItem.name}</span>
+                      <span>{used}/{available}</span>
+                    </div>
+                    <div className="h-2 bg-[#1a110e] rounded-sm overflow-hidden mb-2">
+                      <div className={`h-full ${barColor}`} style={{ width: `${ratio * 100}%` }} />
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => updateInventoryItem(inventoryItem.id, { quantityTotal: Math.max(0, inventoryItem.quantityTotal - 1) })}
+                        className="px-2 py-1 text-xs bg-[#3e2723] border border-[#8d6e63] rounded-sm text-[#d7ccc8] hover:bg-[#4e342e]"
+                      >
+                        - Stock
+                      </button>
+                      <button
+                        onClick={() => updateInventoryItem(inventoryItem.id, { quantityTotal: inventoryItem.quantityTotal + 1 })}
+                        className="px-2 py-1 text-xs bg-[#3e2723] border border-[#8d6e63] rounded-sm text-[#d7ccc8] hover:bg-[#4e342e]"
+                      >
+                        + Stock
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-sm font-bold tracking-wider text-[#d7ccc8] uppercase mb-2">Scenarios</h2>
+            <div className="flex gap-2 mb-2">
+              <input
+                value={scenarioName}
+                onChange={(e) => setScenarioName(e.target.value)}
+                placeholder="Scenario name"
+                className="flex-1 bg-[#120a07] border border-[#5d4037] rounded-sm px-3 py-2 text-sm text-[#d7ccc8] focus:outline-none focus:border-[#ffb74d]"
+              />
+              <button
+                onClick={handleSaveScenario}
+                className="px-3 py-2 text-sm bg-[#3e2723] border border-[#ffb74d] text-[#ffcc80] rounded-sm hover:bg-[#4e342e]"
+              >
+                Save
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {scenarios.length === 0 && (
+                <div className="text-xs text-[#a1887f]">No scenarios yet. Save one to branch the layout.</div>
+              )}
+              {scenarios.map((scenario) => (
+                <div
+                  key={scenario.id}
+                  className={`border rounded-sm p-2 ${activeScenarioId === scenario.id ? 'border-[#ffb74d] bg-[#2d1b15]' : 'border-[#5d4037] bg-[#1a110e]'}`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <button
+                      onClick={() => loadScenario(scenario.id)}
+                      className="text-sm text-left text-[#d7ccc8] hover:text-white truncate"
+                    >
+                      {scenario.name}
+                    </button>
+                    <span className="text-[10px] text-[#a1887f]">{new Date(scenario.updatedAt).toLocaleDateString()}</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={scenario.status}
+                      onChange={(e) => setScenarioStatus(scenario.id, e.target.value as 'draft' | 'review' | 'approved')}
+                      className="flex-1 bg-[#120a07] border border-[#5d4037] rounded-sm px-2 py-1 text-xs text-[#d7ccc8]"
+                    >
+                      <option value="draft">Draft</option>
+                      <option value="review">Review</option>
+                      <option value="approved">Approved</option>
+                    </select>
+                    <button
+                      onClick={() => {
+                        const nextName = window.prompt('Rename scenario', scenario.name)
+                        if (!nextName) return
+                        renameScenario(scenario.id, nextName)
+                      }}
+                      className="px-2 py-1 text-xs bg-[#3e2723] border border-[#8d6e63] rounded-sm text-[#d7ccc8] hover:bg-[#4e342e]"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      onClick={() => deleteScenario(scenario.id)}
+                      className="px-2 py-1 text-xs bg-[#3e2723] border border-[#ef5350] rounded-sm text-[#ef9a9a] hover:bg-[#4e342e]"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <span className="text-[11px] text-[#a1887f]">Autosave is enabled for this browser.</span>
+              <button
+                onClick={handleResetProject}
+                className="px-2 py-1 text-xs bg-[#3e2723] border border-[#ef5350] rounded-sm text-[#ef9a9a] hover:bg-[#4e342e]"
+              >
+                Reset Project
+              </button>
+            </div>
+          </div>
+
+          {inventoryWarning && (
+            <div className="bg-[#3e1f1f] border border-[#ef5350] text-[#ef9a9a] rounded-sm px-3 py-2 text-xs flex items-start justify-between gap-2">
+              <span>{inventoryWarning}</span>
+              <button onClick={clearInventoryWarning} className="text-[#ef9a9a] hover:text-white">x</button>
+            </div>
+          )}
+        </motion.aside>
+
         {/* Bottom UI / Toolbar */}
         <footer className="absolute bottom-0 left-0 right-0 flex flex-col items-center justify-end pb-4 pointer-events-none gap-4">
           {/* ... Toolbar ... */}
@@ -280,21 +546,25 @@ export default function VenueViewer() {
                 label="Round Table"
                 onClick={() => handleAddItemRequest('round-table')}
                 onDragStart={() => setDraggedItem('round-table')}
+                disabled={!canAddRoundTable}
               />
               <ToolbarButton
                 label="Trestle Table"
                 onClick={() => addItem('trestle-table')}
                 onDragStart={() => setDraggedItem('trestle-table')}
+                disabled={!canAddTrestleTable}
               />
               <ToolbarButton
                 label="Chair"
                 onClick={() => setDraggedItem('chair')}
                 onDragStart={() => setDraggedItem('chair')}
+                disabled={!canAddChair}
               />
               <ToolbarButton
                 label="Platform"
                 onClick={() => addItem('platform')}
                 onDragStart={() => setDraggedItem('platform')}
+                disabled={!canAddPlatform}
               />
             </div>
           </motion.div>
@@ -357,14 +627,19 @@ export default function VenueViewer() {
   )
 }
 
-const ToolbarButton = ({ label, onClick, onDragStart }: { label: string, onClick: () => void, onDragStart: () => void }) => (
+const ToolbarButton = ({ label, onClick, onDragStart, disabled = false }: { label: string, onClick: () => void, onDragStart: () => void, disabled?: boolean }) => (
   <button
+    disabled={disabled}
     onPointerDown={(e) => {
+      if (disabled) return
       // Only left click triggers drag
       if (e.button === 0) onDragStart()
     }}
-    onClick={onClick}
-    className="px-6 py-4 rounded-lg transition-transform active:scale-95 flex flex-col items-center gap-1 group touch-none select-none relative overflow-hidden shadow-[0_4px_8px_rgba(0,0,0,0.6)]"
+    onClick={() => {
+      if (disabled) return
+      onClick()
+    }}
+    className={`px-6 py-4 rounded-lg transition-transform active:scale-95 flex flex-col items-center gap-1 group touch-none select-none relative overflow-hidden shadow-[0_4px_8px_rgba(0,0,0,0.6)] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
     style={{
       // Button is a smaller plaque
       background: 'linear-gradient(to bottom, #5d4037, #3e2723)',
