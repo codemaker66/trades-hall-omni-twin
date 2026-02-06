@@ -69,27 +69,28 @@
 ## Phase 2: Core UI & Venue Management
 
 ### 2.1 Layout & Navigation
-- [ ] App shell with sidebar navigation (collapsible on mobile)
-- [ ] Dashboard page with key metrics (upcoming events, pending inquiries)
+- [x] App shell with sidebar navigation (collapsible)
+- [x] Dashboard page with key metrics (upcoming events, pending inquiries)
 - [x] Responsive design (works on desktop)
 - [x] Dark mode (Tailwind)
 
 ### 2.2 Venue Management Pages
-- [ ] Venue list (grid/list toggle, search, filter)
-- [ ] Venue detail/edit form (all fields, image upload, amenities)
+- [x] Venue list (grid/list toggle, search, filter)
+- [x] Venue detail/edit form (all fields, pricing, amenities)
 - [ ] Venue public profile preview
+- [ ] Image upload for venues
 
 ### 2.3 Event & Booking Management
-- [ ] Event list (calendar + list view)
+- [x] Event list (list view with table)
 - [ ] Event detail page
-- [ ] Booking pipeline (Kanban board)
+- [x] Booking pipeline (Kanban board)
 - [ ] Proposal builder
 
 ### 2.4 Furniture Catalog Management
 - [x] Inventory sidebar with usage tracking (in VenueViewer)
-- [ ] Catalog browser (grid view, thumbnails, search, filter)
+- [x] Catalog browser (grid view, thumbnails, search, filter)
 - [ ] Add/edit items (3D model upload, dimensions, capacity)
-- [ ] Default furniture catalog (10-15 common items)
+- [x] Default furniture catalog (12 common items)
 
 ### 2.5 Design System
 - [x] Button (primary, ghost, danger)
@@ -100,16 +101,17 @@
 - [x] Tooltip (with keyboard shortcut display)
 - [x] Toast notifications (success, error, info)
 - [x] Design tokens (theme.ts — colors, typography, spacing, shadows)
-- [ ] Select component
-- [ ] Card component
-- [ ] Badge component
-- [ ] Avatar component
-- [ ] DataTable component
-- [ ] EmptyState component
-- [ ] Loading skeletons
+- [x] Select component
+- [x] Card component
+- [x] Badge component
+- [x] Avatar component
+- [x] DataTable component
+- [x] EmptyState component
+- [x] Loading skeletons (Skeleton, SkeletonRow, SkeletonCard)
+- [x] UI barrel export (ui/index.ts)
 
 ### 2.6 Tests for Phase 2
-- [ ] Component tests (React Testing Library)
+- [x] Component tests (27 tests — Card, Badge, Avatar, DataTable, EmptyState, Skeleton, Select)
 - [ ] E2E tests: create venue, create event, send proposal (Playwright)
 
 ---
@@ -315,3 +317,4 @@
 |------|-------|-----------|
 | 2026-02-06 | Pre-Flight | Codebase inventory, STATUS.md, PROGRESS.md, stack assessment |
 | 2026-02-06 | Phase 1 | DB schema (5 new tables + enhanced venues/users), RBAC middleware, CRUD API routes (4 domains), Zod schemas, 29 schema tests |
+| 2026-02-06 | Phase 2 | Design system (7 new components), app shell with sidebar, dashboard, venue list/detail, events page with pipeline, catalog page, 27 component tests |
