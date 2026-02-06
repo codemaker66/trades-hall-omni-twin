@@ -6,8 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useVenueStore, type FurnitureType, type ProjectImportMode } from '../../store'
 import { useState, useEffect, useMemo, useRef, type ChangeEvent } from 'react'
 
-const SHARE_HASH_PARAM = 'project'
-const MAX_SHARE_URL_LENGTH = 12000
+const INLINE_SHARE_HASH_PARAM = 'project'
+const SNAPSHOT_SHARE_HASH_PARAM = 'share'
+const MAX_INLINE_SHARE_URL_LENGTH = 12000
 
 const encodeProjectPayloadForUrl = (payload: string): string => {
   const bytes = new TextEncoder().encode(payload)
@@ -109,6 +110,7 @@ export default function VenueViewer() {
   const [scenarioName, setScenarioName] = useState('')
   const [projectTransferNotice, setProjectTransferNotice] = useState<string | null>(null)
   const [projectTransferError, setProjectTransferError] = useState<string | null>(null)
+  const [isShortSharePending, setIsShortSharePending] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const pendingImportModeRef = useRef<ProjectImportMode>('replace')
   const hasHydratedSharedProjectRef = useRef(false)
@@ -197,31 +199,75 @@ export default function VenueViewer() {
     if (hasHydratedSharedProjectRef.current) return
     hasHydratedSharedProjectRef.current = true
 
+    let cancelled = false
     const hash = window.location.hash
     if (!hash || hash.length < 2) return
 
     const params = new URLSearchParams(hash.slice(1))
-    const encodedProject = params.get(SHARE_HASH_PARAM)
-    if (!encodedProject) return
+    const snapshotCode = params.get(SNAPSHOT_SHARE_HASH_PARAM)
+    const encodedProject = params.get(INLINE_SHARE_HASH_PARAM)
+    if (!snapshotCode && !encodedProject) return
 
-    try {
-      const payload = decodeProjectPayloadFromUrl(encodedProject)
+    const applyImportedProject = (payload: string, sourceLabel: string): boolean => {
       const result = importProject(payload, { mode: 'replace' })
       if (!result.ok) {
-        setProjectTransferNotice(null)
-        setProjectTransferError(result.message)
-        return
+        if (!cancelled) {
+          setProjectTransferNotice(null)
+          setProjectTransferError(result.message)
+        }
+        return false
       }
 
-      setProjectTransferNotice('Shared project loaded from link.')
-      setProjectTransferError(null)
-      setScenarioName('')
+      if (!cancelled) {
+        setProjectTransferNotice(`Shared project loaded from ${sourceLabel}.`)
+        setProjectTransferError(null)
+        setScenarioName('')
+      }
+      return true
+    }
 
-      const urlWithoutHash = `${window.location.pathname}${window.location.search}`
-      window.history.replaceState(null, '', urlWithoutHash)
-    } catch {
-      setProjectTransferNotice(null)
-      setProjectTransferError('Shared link is invalid or corrupted.')
+    const hydrateSharedProject = async () => {
+      try {
+        if (snapshotCode) {
+          const response = await fetch(`/api/share?code=${encodeURIComponent(snapshotCode)}`, { cache: 'no-store' })
+          const payloadResponse = await response.json().catch(() => null) as { payload?: string, error?: string } | null
+          if (!response.ok) {
+            if (!cancelled) {
+              setProjectTransferNotice(null)
+              setProjectTransferError(payloadResponse?.error ?? 'Short share link is invalid or expired.')
+            }
+            return
+          }
+
+          if (typeof payloadResponse?.payload !== 'string') {
+            if (!cancelled) {
+              setProjectTransferNotice(null)
+              setProjectTransferError('Short share link payload is invalid.')
+            }
+            return
+          }
+
+          const imported = applyImportedProject(payloadResponse.payload, 'short link')
+          if (!imported || cancelled) return
+        } else if (encodedProject) {
+          const payload = decodeProjectPayloadFromUrl(encodedProject)
+          const imported = applyImportedProject(payload, 'inline link')
+          if (!imported || cancelled) return
+        }
+
+        const urlWithoutHash = `${window.location.pathname}${window.location.search}`
+        window.history.replaceState(null, '', urlWithoutHash)
+      } catch {
+        if (!cancelled) {
+          setProjectTransferNotice(null)
+          setProjectTransferError(snapshotCode ? 'Short share link is invalid or expired.' : 'Shared link is invalid or corrupted.')
+        }
+      }
+    }
+
+    void hydrateSharedProject()
+    return () => {
+      cancelled = true
     }
   }, [importProject])
 
@@ -276,13 +322,57 @@ export default function VenueViewer() {
     }
   }
 
-  const handleShareProject = async () => {
+  const handleShareShortProject = async () => {
+    setIsShortSharePending(true)
+
+    try {
+      const payload = exportProject()
+      const response = await fetch('/api/share', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ payload }),
+        cache: 'no-store'
+      })
+
+      const shareResponse = await response.json().catch(() => null) as { code?: string, expiresAt?: string, error?: string } | null
+      if (!response.ok || typeof shareResponse?.code !== 'string') {
+        setProjectTransferNotice(null)
+        setProjectTransferError(shareResponse?.error ?? 'Could not create short share link.')
+        return
+      }
+
+      const shareUrl = `${window.location.origin}${window.location.pathname}${window.location.search}#${SNAPSHOT_SHARE_HASH_PARAM}=${shareResponse.code}`
+      const copied = await copyTextToClipboard(shareUrl)
+      if (!copied) {
+        setProjectTransferNotice(null)
+        setProjectTransferError('Could not copy short share link. Use Export instead.')
+        return
+      }
+
+      const expiresLabel = shareResponse.expiresAt
+        ? new Date(shareResponse.expiresAt).toLocaleDateString()
+        : null
+      setProjectTransferNotice(
+        expiresLabel
+          ? `Short share link copied. Expires ${expiresLabel}.`
+          : 'Short share link copied to clipboard.'
+      )
+      setProjectTransferError(null)
+    } catch {
+      setProjectTransferNotice(null)
+      setProjectTransferError('Could not create short share link.')
+    } finally {
+      setIsShortSharePending(false)
+    }
+  }
+
+  const handleShareInlineProject = async () => {
     try {
       const payload = exportProject()
       const encodedProject = encodeProjectPayloadForUrl(payload)
-      const shareUrl = `${window.location.origin}${window.location.pathname}${window.location.search}#${SHARE_HASH_PARAM}=${encodedProject}`
+      const shareUrl = `${window.location.origin}${window.location.pathname}${window.location.search}#${INLINE_SHARE_HASH_PARAM}=${encodedProject}`
 
-      if (shareUrl.length > MAX_SHARE_URL_LENGTH) {
+      if (shareUrl.length > MAX_INLINE_SHARE_URL_LENGTH) {
         setProjectTransferNotice(null)
         setProjectTransferError('Project is too large to share as a URL. Use Export instead.')
         return
@@ -295,11 +385,11 @@ export default function VenueViewer() {
         return
       }
 
-      setProjectTransferNotice('Share link copied to clipboard.')
+      setProjectTransferNotice('Inline share link copied to clipboard.')
       setProjectTransferError(null)
     } catch {
       setProjectTransferNotice(null)
-      setProjectTransferError('Could not generate share link.')
+      setProjectTransferError('Could not generate inline share link.')
     }
   }
 
@@ -694,12 +784,19 @@ export default function VenueViewer() {
               onChange={handleImportFileChange}
             />
 
-            <div className="mt-2 grid grid-cols-4 gap-2">
+            <div className="mt-2 grid grid-cols-5 gap-2">
               <button
-                onClick={handleShareProject}
+                onClick={handleShareShortProject}
+                disabled={isShortSharePending}
+                className={`px-2 py-1 text-xs bg-[#3e2723] border border-[#4fc3f7] rounded-sm text-[#b3e5fc] hover:bg-[#4e342e] ${isShortSharePending ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                {isShortSharePending ? 'Sharing...' : 'Share Short'}
+              </button>
+              <button
+                onClick={handleShareInlineProject}
                 className="px-2 py-1 text-xs bg-[#3e2723] border border-[#4fc3f7] rounded-sm text-[#b3e5fc] hover:bg-[#4e342e]"
               >
-                Share Link
+                Share Inline
               </button>
               <button
                 onClick={handleExportProject}
