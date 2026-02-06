@@ -1,0 +1,316 @@
+# OmniTwin Progress Tracker
+
+> Living checklist mirroring VENUE_PLATFORM_MASTER_COMMAND.md phases.
+> Updated after each session.
+
+---
+
+## Pre-Flight: Codebase Assessment
+
+- [x] Inventory existing codebase
+- [x] Document findings in STATUS.md
+- [x] Identify current stack vs target stack
+- [x] Create PROGRESS.md (this file)
+
+**Stack decision**: Keep Turborepo + npm + Hono + custom event sourcing. No migration to Nx/pnpm/Emmett needed — current stack is working and well-tested.
+
+---
+
+## Phase 1: Foundation & Data Architecture
+
+### 1.1 Project Structure
+- [x] Monorepo with workspace packages (Turborepo, not Nx — keeping as-is)
+- [x] TypeScript strict mode, ESLint, Prettier
+- [ ] `.env.example` with all required env vars documented — exists but incomplete
+- [x] `packages/db/` with Drizzle ORM schema
+
+### 1.2 Database Schema
+- [x] `users` table (id, email, name, passwordHash, avatarUrl, timestamps)
+- [x] `sessions` table (id, userId, expiresAt)
+- [x] `oauth_accounts` table (provider, providerAccountId, tokens)
+- [x] `venues` table (id, name, ownerId, timestamps, archivedAt)
+- [x] `venue_permissions` table (venueId, userId, role)
+- [x] `venue_events` table (event sourcing — id, venueId, version, type, payload, userId, timestamp)
+- [x] `venue_snapshots` table (venueId, version, state)
+- [ ] `floor_plans` table (id, venueId, name, version, dimensions, objects JSONB, is_template)
+- [ ] `events` table (bookings — id, venueId, organizerId, name, type, dates, guest_count, status, floor_plan_id)
+- [ ] `proposals` table (id, eventId, venueId, status, pricing, message, valid_until)
+- [ ] `bookings` table (id, eventId, venueId, proposalId, status, amounts, contract)
+- [ ] `furniture_catalog` table (id, name, category, model_url, dimensions, capacity, stackable)
+
+### 1.3 Authentication & Authorization
+- [x] Auth routes (register, login, logout, me)
+- [x] Password hashing (argon2)
+- [x] Session management (cookie-based)
+- [x] Roles defined in DB (owner, editor, viewer, commenter)
+- [ ] RBAC middleware protecting API routes by role
+- [ ] Invite system (owners invite managers, planners share view-only links)
+
+### 1.4 API Layer
+- [x] Share snapshot API (POST /api/share)
+- [ ] CRUD: venues
+- [ ] CRUD: floor_plans
+- [ ] CRUD: events (bookings)
+- [ ] CRUD: proposals
+- [ ] CRUD: bookings
+- [ ] CRUD: furniture_catalog
+- [ ] Zod validation schemas (shared client/server)
+- [ ] Consistent error response format
+- [ ] Rate limiting on public endpoints
+
+### 1.5 Tests for Phase 1
+- [x] Engine unit tests (182 tests — command-validator, projector, handler, undo, ECS)
+- [ ] Zod schema unit tests
+- [ ] API route integration tests (CRUD operations)
+- [ ] Database migration tests (up/down)
+
+---
+
+## Phase 2: Core UI & Venue Management
+
+### 2.1 Layout & Navigation
+- [ ] App shell with sidebar navigation (collapsible on mobile)
+- [ ] Dashboard page with key metrics (upcoming events, pending inquiries)
+- [x] Responsive design (works on desktop)
+- [x] Dark mode (Tailwind)
+
+### 2.2 Venue Management Pages
+- [ ] Venue list (grid/list toggle, search, filter)
+- [ ] Venue detail/edit form (all fields, image upload, amenities)
+- [ ] Venue public profile preview
+
+### 2.3 Event & Booking Management
+- [ ] Event list (calendar + list view)
+- [ ] Event detail page
+- [ ] Booking pipeline (Kanban board)
+- [ ] Proposal builder
+
+### 2.4 Furniture Catalog Management
+- [x] Inventory sidebar with usage tracking (in VenueViewer)
+- [ ] Catalog browser (grid view, thumbnails, search, filter)
+- [ ] Add/edit items (3D model upload, dimensions, capacity)
+- [ ] Default furniture catalog (10-15 common items)
+
+### 2.5 Design System
+- [x] Button (primary, ghost, danger)
+- [x] IconButton
+- [x] Input (text, dark theme)
+- [x] Modal
+- [x] ConfirmDialog
+- [x] Tooltip (with keyboard shortcut display)
+- [x] Toast notifications (success, error, info)
+- [x] Design tokens (theme.ts — colors, typography, spacing, shadows)
+- [ ] Select component
+- [ ] Card component
+- [ ] Badge component
+- [ ] Avatar component
+- [ ] DataTable component
+- [ ] EmptyState component
+- [ ] Loading skeletons
+
+### 2.6 Tests for Phase 2
+- [ ] Component tests (React Testing Library)
+- [ ] E2E tests: create venue, create event, send proposal (Playwright)
+
+---
+
+## Phase 3: 2D Floor Plan Editor
+
+### 3.1 Canvas Setup
+- [ ] 2D canvas (Konva.js or SVG)
+- [ ] Grid with configurable snap (1ft, 6in)
+- [ ] Zoom (scroll + pinch), pan (middle-click, two-finger)
+- [ ] Minimap
+- [ ] Ruler/measurement display
+
+### 3.2 Floor Plan Drawing
+- [ ] Draw room boundaries (walls)
+- [ ] Set room dimensions numerically
+- [ ] Upload background image and scale
+- [ ] Multiple rooms/zones
+
+### 3.3 Furniture Placement (2D)
+- [ ] Drag from catalog sidebar onto canvas
+- [ ] Snap to grid + smart alignment guides
+- [ ] Rotate (free + snap to 0/45/90), scale
+- [ ] Multi-select, group move/rotate
+- [ ] Copy/paste, duplicate, delete
+- [ ] Right-click context menu
+- [ ] Undo/redo (50+ steps)
+
+### 3.4 Smart Features
+- [ ] Auto-count (live seat/table/standing count)
+- [ ] Capacity validation warnings
+- [ ] Spacing checker (minimum 3ft between table edges)
+- [ ] Fire code helper (exit path, aisle width)
+
+### 3.5 Floor Plan Templates
+- [ ] Save as template
+- [ ] Pre-built templates (classroom, banquet, theater, cocktail, U-shape, boardroom, ceremony)
+- [ ] Apply template then customize
+
+### 3.6 Export & Sharing
+- [ ] PNG/PDF export (with dimensions, counts, legend)
+- [ ] Shareable view-only link
+- [ ] Print-optimized view
+
+### 3.7 Tests for Phase 3
+- [ ] Geometry helper unit tests
+- [ ] Undo/redo integration tests
+- [ ] E2E: place, move, undo, export
+
+---
+
+## Phase 4: 3D Visualization
+
+### 4.1 Three.js / R3F Setup
+- [x] Three.js 0.164 + R3F 9.5 + drei 10.7 installed
+- [x] WebGL renderer (default)
+- [ ] WebGPU renderer with fallback
+- [ ] `<PerformanceMonitor>` from drei
+
+### 4.2 Scene Construction
+- [x] Hall model (extruded walls, floor, doors, windows, dome)
+- [x] Furniture rendering (round table, trestle table, chair, platform)
+- [x] Lighting (ambient + spot + point + contact shadows)
+- [x] Floor plane with procedural wood texture
+- [ ] Load GLB models from furniture catalog
+- [ ] Fallback colored boxes with labels for missing models
+
+### 4.3 3D Navigation
+- [x] RTS camera controls (orbit, zoom, edge-pan, WASD)
+- [ ] First-person walkthrough mode
+- [ ] Preset camera angles (top-down, entrance, stage)
+- [ ] Smooth animated transitions
+
+### 4.4 Bidirectional Sync
+- [ ] 2D changes reflected in 3D (needs 2D editor first)
+- [x] Object selection in 3D (click to select, highlight)
+
+### 4.5 Performance Optimization
+- [x] Shared geometries + materials (module-level, reused)
+- [x] React.memo on all furniture components
+- [x] Object pooling (threePool.ts)
+- [ ] InstancedMesh for repeated furniture
+- [ ] LOD system (simplified meshes when zoomed out)
+- [ ] DPR capping (1.0 desktop, 1.5 mobile)
+
+### 4.6 Asset Pipeline
+- [ ] GLB/GLTF upload with validation
+- [ ] Thumbnail generation
+- [ ] Dimension extraction
+- [ ] Draco/KTX2 compression
+- [ ] Object storage (S3/R2)
+
+### 4.7 Tests for Phase 4
+- [x] Drag & selection tests (78 web tests)
+- [ ] 2D-to-3D coordinate conversion tests
+- [ ] Performance benchmark (200-object scene < 200 draw calls)
+
+---
+
+## Phase 5: Real-Time Collaboration
+
+### 5.1 Yjs Integration
+- [ ] Install Yjs v13.6+
+- [ ] Y.Doc per floor plan
+- [ ] Y.Map per furniture item, Y.Array for item list
+- [ ] Typed observation events
+
+### 5.2 WebSocket Backend
+- [ ] Hocuspocus server
+- [ ] Auth hook (validate session, check access)
+- [ ] Persistence hook (save Y.Doc to DB, debounced)
+- [ ] Load hook (restore from DB)
+
+### 5.3 Presence & Awareness
+- [ ] Connected user avatars in toolbar
+- [ ] Remote cursors on canvas (colored by user)
+- [ ] Remote selection highlights
+- [ ] Awareness throttled to 10-15Hz
+
+### 5.4 Conflict Handling
+- [ ] CRDT auto-merge
+- [ ] Visual indicator for remote changes
+- [ ] Optimistic drag locking
+
+### 5.5 Offline Support
+- [ ] y-indexeddb for local persistence
+- [ ] Queue offline changes, sync on reconnect
+- [ ] Connection status indicator
+
+### 5.6 Tests for Phase 5
+- [ ] Two-client sync integration test
+- [ ] Offline/reconnect test
+- [ ] Load test (10 concurrent editors)
+
+---
+
+## Phase 6: Polish, Accessibility & Production Readiness
+
+### 6.1 Accessibility
+- [ ] All interactive elements keyboard-accessible
+- [ ] Tab through furniture, arrow keys to nudge
+- [ ] Accessible table/list view for 3D objects
+- [ ] WCAG 2.2 AA color contrast
+- [ ] aria-label, aria-live regions
+- [ ] Numeric input fields as drag alternative (WCAG 2.5.7)
+- [ ] Screen reader announcements
+- [ ] Color-blind safe palette (Okabe-Ito)
+- [ ] `prefers-reduced-motion` support
+- [ ] High contrast mode
+
+### 6.2 Performance Audit
+- [ ] Lighthouse > 90 on all pages
+- [ ] LCP < 2.5s, FID < 100ms, CLS < 0.1
+- [ ] Bundle analysis and code-splitting
+- [ ] Image optimization (WebP/AVIF)
+- [ ] Database query optimization (indexes, slow queries)
+- [ ] API caching
+
+### 6.3 Error Handling & Edge Cases
+- [x] Global error boundary
+- [x] Toast notifications (save success/failure)
+- [ ] Auto-save with visual indicator
+- [ ] Session expiry handling
+- [ ] Rate limit error handling
+- [ ] Large floor plan handling (> 500 objects)
+
+### 6.4 Onboarding
+- [ ] Guided tour (5 steps max)
+- [ ] Endowed progress
+- [ ] Empty states with CTAs
+- [ ] Tooltip hints for non-obvious features
+- [ ] Sample venue for exploration
+
+### 6.5 Security Audit
+- [ ] Input sanitization
+- [ ] File upload validation (server-side)
+- [ ] SQL injection prevention (Drizzle handles)
+- [ ] XSS prevention
+- [ ] CSRF protection
+- [ ] Secure headers (CSP, HSTS)
+- [ ] Shareable link token security
+
+### 6.6 DevOps & Deployment
+- [x] Docker Compose (web, server, postgres, redis, redpanda)
+- [x] CI pipeline (lint, typecheck, test, build)
+- [ ] CI: add server to pipeline
+- [ ] Database migration strategy (up/down, seed data)
+- [ ] Staging + production environment config
+- [ ] Health check endpoint
+- [ ] Structured logging (JSON, request IDs)
+- [ ] Error monitoring (Sentry)
+
+### 6.7 Documentation
+- [ ] README.md (setup, architecture, env vars)
+- [ ] API documentation (from Zod/OpenAPI)
+- [ ] CONTRIBUTING.md
+
+---
+
+## Session Log
+
+| Date | Phase | Work Done |
+|------|-------|-----------|
+| 2026-02-06 | Pre-Flight | Codebase inventory, STATUS.md, PROGRESS.md, stack assessment |
