@@ -6,6 +6,67 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useVenueStore, type FurnitureType, type ProjectImportMode } from '../../store'
 import { useState, useEffect, useMemo, useRef, type ChangeEvent } from 'react'
 
+const SHARE_HASH_PARAM = 'project'
+const MAX_SHARE_URL_LENGTH = 12000
+
+const encodeProjectPayloadForUrl = (payload: string): string => {
+  const bytes = new TextEncoder().encode(payload)
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '')
+}
+
+const decodeProjectPayloadFromUrl = (encoded: string): string => {
+  const normalized = encoded
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  const binary = atob(padded)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Fallback below.
+    }
+  }
+
+  if (typeof document === 'undefined') {
+    return false
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  } catch {
+    copied = false
+  } finally {
+    document.body.removeChild(textarea)
+  }
+
+  return copied
+}
+
 export default function VenueViewer() {
   const addItem = useVenueStore((state) => state.addItem)
   const selectedIds = useVenueStore((state) => state.selectedIds)
@@ -50,6 +111,7 @@ export default function VenueViewer() {
   const [projectTransferError, setProjectTransferError] = useState<string | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
   const pendingImportModeRef = useRef<ProjectImportMode>('replace')
+  const hasHydratedSharedProjectRef = useRef(false)
 
   const inventoryUsage = useMemo(() => {
     const usage: Record<FurnitureType, number> = {
@@ -131,6 +193,38 @@ export default function VenueViewer() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  useEffect(() => {
+    if (hasHydratedSharedProjectRef.current) return
+    hasHydratedSharedProjectRef.current = true
+
+    const hash = window.location.hash
+    if (!hash || hash.length < 2) return
+
+    const params = new URLSearchParams(hash.slice(1))
+    const encodedProject = params.get(SHARE_HASH_PARAM)
+    if (!encodedProject) return
+
+    try {
+      const payload = decodeProjectPayloadFromUrl(encodedProject)
+      const result = importProject(payload, { mode: 'replace' })
+      if (!result.ok) {
+        setProjectTransferNotice(null)
+        setProjectTransferError(result.message)
+        return
+      }
+
+      setProjectTransferNotice('Shared project loaded from link.')
+      setProjectTransferError(null)
+      setScenarioName('')
+
+      const urlWithoutHash = `${window.location.pathname}${window.location.search}`
+      window.history.replaceState(null, '', urlWithoutHash)
+    } catch {
+      setProjectTransferNotice(null)
+      setProjectTransferError('Shared link is invalid or corrupted.')
+    }
+  }, [importProject])
+
   const handleAddItemRequest = (type: FurnitureType) => {
     if (type === 'round-table') {
       if (!canAddRoundTable) {
@@ -179,6 +273,33 @@ export default function VenueViewer() {
     } catch {
       setProjectTransferNotice(null)
       setProjectTransferError('Project export failed. Please try again.')
+    }
+  }
+
+  const handleShareProject = async () => {
+    try {
+      const payload = exportProject()
+      const encodedProject = encodeProjectPayloadForUrl(payload)
+      const shareUrl = `${window.location.origin}${window.location.pathname}${window.location.search}#${SHARE_HASH_PARAM}=${encodedProject}`
+
+      if (shareUrl.length > MAX_SHARE_URL_LENGTH) {
+        setProjectTransferNotice(null)
+        setProjectTransferError('Project is too large to share as a URL. Use Export instead.')
+        return
+      }
+
+      const copied = await copyTextToClipboard(shareUrl)
+      if (!copied) {
+        setProjectTransferNotice(null)
+        setProjectTransferError('Could not copy share link. Use Export instead.')
+        return
+      }
+
+      setProjectTransferNotice('Share link copied to clipboard.')
+      setProjectTransferError(null)
+    } catch {
+      setProjectTransferNotice(null)
+      setProjectTransferError('Could not generate share link.')
     }
   }
 
@@ -573,7 +694,13 @@ export default function VenueViewer() {
               onChange={handleImportFileChange}
             />
 
-            <div className="mt-2 grid grid-cols-3 gap-2">
+            <div className="mt-2 grid grid-cols-4 gap-2">
+              <button
+                onClick={handleShareProject}
+                className="px-2 py-1 text-xs bg-[#3e2723] border border-[#4fc3f7] rounded-sm text-[#b3e5fc] hover:bg-[#4e342e]"
+              >
+                Share Link
+              </button>
               <button
                 onClick={handleExportProject}
                 className="px-2 py-1 text-xs bg-[#3e2723] border border-[#8d6e63] rounded-sm text-[#d7ccc8] hover:bg-[#4e342e]"
