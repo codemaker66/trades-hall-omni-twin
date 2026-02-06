@@ -179,32 +179,37 @@
 - [x] WebGL renderer (default)
 - [ ] WebGPU renderer with fallback
 - [ ] `<PerformanceMonitor>` from drei
+- [x] Lazy-loaded 3D view (Three.js only initialized when switching to 3D tab)
 
 ### 4.2 Scene Construction
-- [x] Hall model (extruded walls, floor, doors, windows, dome)
+- [x] Hall model (extruded walls, floor, doors, windows, dome) — full 3D editor
 - [x] Furniture rendering (round table, trestle table, chair, platform)
 - [x] Lighting (ambient + spot + point + contact shadows)
 - [x] Floor plane with procedural wood texture
+- [x] 3D Preview: converts 2D floor plan items to 3D scene (coordinateBridge.ts)
+- [x] Fallback colored boxes for items without 3D models (decor, equipment)
 - [ ] Load GLB models from furniture catalog
-- [ ] Fallback colored boxes with labels for missing models
 
 ### 4.3 3D Navigation
-- [x] RTS camera controls (orbit, zoom, edge-pan, WASD)
+- [x] RTS camera controls (orbit, zoom, edge-pan, WASD) — full 3D editor
+- [x] MapControls in 3D preview (orbit, pan, zoom)
 - [ ] First-person walkthrough mode
-- [ ] Preset camera angles (top-down, entrance, stage)
-- [ ] Smooth animated transitions
+- [x] Preset camera angles (top-down, entrance, stage, perspective)
+- [x] Smooth animated transitions (easeInOutCubic camera lerp)
 
 ### 4.4 Bidirectional Sync
-- [ ] 2D changes reflected in 3D (needs 2D editor first)
-- [x] Object selection in 3D (click to select, highlight)
+- [x] 2D ↔ 3D toggle view (FloorPlanEditor tabs)
+- [x] 2D floor plan items reflected in 3D (coordinate bridge: feet→meters, centered origin)
+- [x] Category→FurnitureType mapping (round-table, trestle-table, chair, platform)
+- [x] Object selection in 3D (click to select, highlight) — full 3D editor
 
 ### 4.5 Performance Optimization
 - [x] Shared geometries + materials (module-level, reused)
 - [x] React.memo on all furniture components
 - [x] Object pooling (threePool.ts)
-- [ ] InstancedMesh for repeated furniture
+- [x] InstancedMesh for repeated furniture (chairs: 6 draw calls, round tables: 2, trestle: 3)
 - [ ] LOD system (simplified meshes when zoomed out)
-- [ ] DPR capping (1.0 desktop, 1.5 mobile)
+- [x] DPR capping ([1, 2])
 
 ### 4.6 Asset Pipeline
 - [ ] GLB/GLTF upload with validation
@@ -214,8 +219,9 @@
 - [ ] Object storage (S3/R2)
 
 ### 4.7 Tests for Phase 4
-- [x] Drag & selection tests (78 web tests)
-- [ ] 2D-to-3D coordinate conversion tests
+- [x] Drag & selection tests (78 web tests) — full 3D editor
+- [x] 2D-to-3D coordinate conversion tests (26 tests)
+- [x] Category mapping, rotation conversion, floor dimensions, camera presets
 - [ ] Performance benchmark (200-object scene < 200 draw calls)
 
 ---
@@ -328,3 +334,4 @@
 | 2026-02-06 | Phase 1 | DB schema (5 new tables + enhanced venues/users), RBAC middleware, CRUD API routes (4 domains), Zod schemas, 29 schema tests |
 | 2026-02-06 | Phase 2 | Design system (7 new components), app shell with sidebar, dashboard, venue list/detail, events page with pipeline, catalog page, 27 component tests |
 | 2026-02-06 | Phase 3 | 2D floor plan editor (Konva canvas, grid snap, 10 furniture types, multi-select, drag, undo/redo, 7 templates, spacing checker, capacity warnings, PNG export, legend), 39 tests |
+| 2026-02-06 | Phase 4 | 2D/3D toggle view, coordinate bridge (feet↔meters), 3D preview with InstancedMesh, camera presets with animated transitions, lazy-loaded Three.js, 26 tests |
