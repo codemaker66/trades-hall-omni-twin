@@ -1,6 +1,8 @@
 'use client'
 
 import { useFloorPlanStore } from './store'
+import { getStageInstance } from './Canvas2D'
+import { downloadPng, generateLegend } from './exportFloorPlan'
 
 export function EditorToolbar() {
   const {
@@ -9,6 +11,25 @@ export function EditorToolbar() {
   } = useFloorPlanStore()
 
   const metrics = useFloorPlanStore((s) => s.getMetrics())
+
+  const handleExport = () => {
+    const stage = getStageInstance()
+    if (!stage) return
+    const state = useFloorPlanStore.getState()
+    downloadPng({
+      stage,
+      items: state.items,
+      planWidthFt: state.planWidthFt,
+      planHeightFt: state.planHeightFt,
+      planName: 'floor-plan',
+    })
+  }
+
+  const handleCopyLegend = () => {
+    const state = useFloorPlanStore.getState()
+    const legend = generateLegend(state.items, state.planWidthFt, state.planHeightFt)
+    void navigator.clipboard.writeText(legend)
+  }
 
   return (
     <div className="h-12 flex items-center justify-between px-4 bg-surface-5 border-b border-surface-25 text-sm">
@@ -93,6 +114,23 @@ export function EditorToolbar() {
           <option value={1}>1ft</option>
           <option value={2}>2ft</option>
         </select>
+
+        <div className="w-px h-6 bg-surface-25 mx-1" />
+
+        <button
+          onClick={handleExport}
+          className="px-2 py-1 rounded text-xs font-medium text-surface-70 hover:text-surface-90"
+          title="Export PNG"
+        >
+          Export
+        </button>
+        <button
+          onClick={handleCopyLegend}
+          className="px-2 py-1 rounded text-xs font-medium text-surface-70 hover:text-surface-90"
+          title="Copy legend to clipboard"
+        >
+          Legend
+        </button>
 
         <div className="w-px h-6 bg-surface-25 mx-1" />
 

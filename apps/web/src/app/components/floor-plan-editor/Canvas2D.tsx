@@ -9,7 +9,13 @@ import { SelectionRect } from './SelectionRect'
 import { SpacingOverlay } from './SpacingOverlay'
 import { useFloorPlanStore, snapToGrid2D } from './store'
 
-const PIXELS_PER_FOOT = 40
+export const PIXELS_PER_FOOT = 40
+
+// Module-level ref for export access
+let _stageInstance: Konva.Stage | null = null
+export function getStageInstance(): Konva.Stage | null {
+  return _stageInstance
+}
 
 interface Canvas2DProps {
   width: number
@@ -213,6 +219,12 @@ export function Canvas2D({ width, height }: Canvas2DProps) {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // Expose stage instance for export
+  useEffect(() => {
+    _stageInstance = stageRef.current
+    return () => { _stageInstance = null }
   }, [])
 
   return (
