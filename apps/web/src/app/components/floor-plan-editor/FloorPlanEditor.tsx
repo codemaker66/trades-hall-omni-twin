@@ -6,6 +6,8 @@ import { EditorToolbar } from './EditorToolbar'
 import { CatalogSidebar } from './CatalogSidebar'
 import { CapacityWarning } from './CapacityWarning'
 import { useEditorKeyboard } from './useEditorKeyboard'
+import { useAutoSave } from './useAutoSave'
+import { SaveIndicator } from './SaveIndicator'
 
 // Konva must be client-only (uses window)
 const Canvas2D = dynamic(() => import('./Canvas2D').then((m) => m.Canvas2D), { ssr: false })
@@ -25,6 +27,9 @@ export function FloorPlanEditor() {
 
   // Global keyboard shortcuts (Tab cycle, arrow nudge, Del, R, Ctrl+Z/A/Esc)
   useEditorKeyboard(viewMode === '2d')
+
+  // Auto-save to localStorage with debounce
+  const { status: saveStatus } = useAutoSave()
 
   useEffect(() => {
     const el = containerRef.current
@@ -83,6 +88,11 @@ export function FloorPlanEditor() {
               Orbit: right-click drag &middot; Pan: middle-click &middot; Zoom: scroll wheel
             </div>
           )}
+
+          {/* Save indicator */}
+          <div className="px-3">
+            <SaveIndicator status={saveStatus} />
+          </div>
         </div>
 
         <div ref={containerRef} className="relative flex-1 overflow-hidden">
