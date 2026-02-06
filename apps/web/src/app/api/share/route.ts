@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'node:crypto'
-import { getShareSnapshotStore } from './shareStore'
+import { getShareSnapshotStore, type ShareSnapshot } from './shareStore'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,17 +31,19 @@ const createSnapshotCode = (): string => {
     .join('')
 }
 
-const createUniqueSnapshotCode = async (): Promise<string> => {
+const createUniqueSnapshotCode = async (snapshot: ShareSnapshot): Promise<string> => {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const code = createSnapshotCode()
-    if (!(await shareSnapshotStore.has(code))) {
+    const reserved = await shareSnapshotStore.setIfAbsent(code, snapshot)
+    if (reserved) {
       return code
     }
   }
 
   while (true) {
     const code = createSnapshotCode()
-    if (!(await shareSnapshotStore.has(code))) {
+    const reserved = await shareSnapshotStore.setIfAbsent(code, snapshot)
+    if (reserved) {
       return code
     }
   }
@@ -74,13 +76,12 @@ export async function POST(request: NextRequest) {
 
   const createdAt = nowMs()
   const expiresAt = createdAt + SNAPSHOT_TTL_MS
-  const code = await createUniqueSnapshotCode()
-
-  await shareSnapshotStore.set(code, {
+  const snapshot: ShareSnapshot = {
     payload,
     createdAt,
     expiresAt
-  })
+  }
+  const code = await createUniqueSnapshotCode(snapshot)
 
   return jsonNoStore({
     code,

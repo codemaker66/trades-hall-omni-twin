@@ -10,11 +10,14 @@ export type ShareSnapshot = {
 export interface ShareSnapshotStore {
   get(code: string): Promise<ShareSnapshot | null>
   set(code: string, snapshot: ShareSnapshot): Promise<void>
+  setIfAbsent(code: string, snapshot: ShareSnapshot): Promise<boolean>
   has(code: string): Promise<boolean>
   delete(code: string): Promise<void>
   purgeExpired(now: number): Promise<void>
   evictOldest(maxEntries: number): Promise<void>
 }
+
+type ShareStoreMode = 'memory' | 'file' | 'redis'
 
 const SHARE_STORE_FILE_VERSION = 1
 
@@ -26,6 +29,32 @@ type ShareStoreFile = {
     createdAt: number
     expiresAt: number
   }>
+}
+
+type RedisClientFactory = (options: { url: string }) => RedisClientCompat
+
+interface RedisMultiCompat {
+  del(key: string | string[]): RedisMultiCompat
+  zRem(key: string, members: string | string[]): RedisMultiCompat
+  zAdd(key: string, members: Array<{ score: number, value: string }>): RedisMultiCompat
+  exec(): Promise<unknown>
+}
+
+interface RedisClientCompat {
+  isOpen: boolean
+  connect(): Promise<unknown>
+  on(event: 'error', listener: (error: unknown) => void): unknown
+  get(key: string): Promise<string | null>
+  set(
+    key: string,
+    value: string,
+    options?: { PX?: number, NX?: boolean }
+  ): Promise<'OK' | null | unknown>
+  exists(key: string): Promise<number>
+  zRangeByScore(key: string, min: number | string, max: number | string): Promise<string[]>
+  zRange(key: string, start: number, stop: number): Promise<string[]>
+  zCard(key: string): Promise<number>
+  multi(): RedisMultiCompat
 }
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -68,6 +97,45 @@ const normalizeStoreFile = (raw: unknown): ShareStoreFile => {
   }
 }
 
+const toKeyPrefix = (prefix: string): string => {
+  const trimmed = prefix.trim()
+  if (!trimmed) return 'omnitwin:share:'
+  return trimmed.endsWith(':') ? trimmed : `${trimmed}:`
+}
+
+const getSnapshotTtlMs = (snapshot: ShareSnapshot): number => {
+  const ttlMs = snapshot.expiresAt - Date.now()
+  return Math.max(1, ttlMs)
+}
+
+let redisClientFactoryPromise: Promise<RedisClientFactory | null> | null = null
+
+const loadRedisClientFactory = async (): Promise<RedisClientFactory | null> => {
+  if (redisClientFactoryPromise) {
+    return redisClientFactoryPromise
+  }
+
+  redisClientFactoryPromise = (async () => {
+    try {
+      const dynamicImport = new Function(
+        'moduleName',
+        'return import(moduleName)'
+      ) as (moduleName: string) => Promise<unknown>
+
+      const redisModule = await dynamicImport('redis') as { createClient?: unknown }
+      if (!redisModule || typeof redisModule.createClient !== 'function') {
+        return null
+      }
+
+      return redisModule.createClient as RedisClientFactory
+    } catch {
+      return null
+    }
+  })()
+
+  return redisClientFactoryPromise
+}
+
 class MemoryShareSnapshotStore implements ShareSnapshotStore {
   protected readonly entries = new Map<string, ShareSnapshot>()
 
@@ -81,6 +149,15 @@ class MemoryShareSnapshotStore implements ShareSnapshotStore {
       throw new Error('Invalid snapshot payload.')
     }
     this.entries.set(code, { ...snapshot })
+  }
+
+  async setIfAbsent(code: string, snapshot: ShareSnapshot): Promise<boolean> {
+    if (!isSnapshot(snapshot)) {
+      throw new Error('Invalid snapshot payload.')
+    }
+    if (this.entries.has(code)) return false
+    this.entries.set(code, { ...snapshot })
+    return true
   }
 
   async has(code: string): Promise<boolean> {
@@ -142,6 +219,15 @@ class FileShareSnapshotStore extends MemoryShareSnapshotStore {
     await this.ensureLoaded()
     await super.set(code, snapshot)
     await this.flush()
+  }
+
+  override async setIfAbsent(code: string, snapshot: ShareSnapshot): Promise<boolean> {
+    await this.ensureLoaded()
+    const inserted = await super.setIfAbsent(code, snapshot)
+    if (inserted) {
+      await this.flush()
+    }
+    return inserted
   }
 
   override async has(code: string): Promise<boolean> {
@@ -229,9 +315,189 @@ class FileShareSnapshotStore extends MemoryShareSnapshotStore {
   }
 }
 
-const resolveStoreMode = (): 'memory' | 'file' => {
+class RedisShareSnapshotStore implements ShareSnapshotStore {
+  private readonly redisUrl: string
+  private readonly keyPrefix: string
+  private readonly createdIndexKey: string
+  private readonly expiresIndexKey: string
+  private client: RedisClientCompat | null = null
+  private connectPromise: Promise<void> | null = null
+  private clientInitPromise: Promise<RedisClientCompat> | null = null
+
+  constructor(redisUrl: string, keyPrefix: string) {
+    this.redisUrl = redisUrl
+    this.keyPrefix = toKeyPrefix(keyPrefix)
+    this.createdIndexKey = `${this.keyPrefix}__idx_created`
+    this.expiresIndexKey = `${this.keyPrefix}__idx_expires`
+  }
+
+  async get(code: string): Promise<ShareSnapshot | null> {
+    const client = await this.ensureConnected()
+    const key = this.toSnapshotKey(code)
+    const raw = await client.get(key)
+    if (!raw) return null
+
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (!isSnapshot(parsed)) {
+        await this.delete(code)
+        return null
+      }
+      return parsed
+    } catch {
+      await this.delete(code)
+      return null
+    }
+  }
+
+  async set(code: string, snapshot: ShareSnapshot): Promise<void> {
+    if (!isSnapshot(snapshot)) {
+      throw new Error('Invalid snapshot payload.')
+    }
+
+    const client = await this.ensureConnected()
+    const key = this.toSnapshotKey(code)
+    const ttlMs = getSnapshotTtlMs(snapshot)
+    const payload = JSON.stringify(snapshot)
+
+    await client.set(key, payload, { PX: ttlMs })
+    await client.multi()
+      .zAdd(this.createdIndexKey, [{ score: snapshot.createdAt, value: key }])
+      .zAdd(this.expiresIndexKey, [{ score: snapshot.expiresAt, value: key }])
+      .exec()
+  }
+
+  async setIfAbsent(code: string, snapshot: ShareSnapshot): Promise<boolean> {
+    if (!isSnapshot(snapshot)) {
+      throw new Error('Invalid snapshot payload.')
+    }
+
+    const client = await this.ensureConnected()
+    const key = this.toSnapshotKey(code)
+    const ttlMs = getSnapshotTtlMs(snapshot)
+    const payload = JSON.stringify(snapshot)
+    const result = await client.set(key, payload, { PX: ttlMs, NX: true })
+    if (result !== 'OK') return false
+
+    await client.multi()
+      .zAdd(this.createdIndexKey, [{ score: snapshot.createdAt, value: key }])
+      .zAdd(this.expiresIndexKey, [{ score: snapshot.expiresAt, value: key }])
+      .exec()
+
+    return true
+  }
+
+  async has(code: string): Promise<boolean> {
+    const client = await this.ensureConnected()
+    const key = this.toSnapshotKey(code)
+    return (await client.exists(key)) > 0
+  }
+
+  async delete(code: string): Promise<void> {
+    const client = await this.ensureConnected()
+    const key = this.toSnapshotKey(code)
+
+    await client.multi()
+      .del(key)
+      .zRem(this.createdIndexKey, key)
+      .zRem(this.expiresIndexKey, key)
+      .exec()
+  }
+
+  async purgeExpired(now: number): Promise<void> {
+    const client = await this.ensureConnected()
+    const expiredKeys = await client.zRangeByScore(this.expiresIndexKey, '-inf', now)
+    if (expiredKeys.length === 0) return
+
+    await client.multi()
+      .del(expiredKeys)
+      .zRem(this.createdIndexKey, expiredKeys)
+      .zRem(this.expiresIndexKey, expiredKeys)
+      .exec()
+  }
+
+  async evictOldest(maxEntries: number): Promise<void> {
+    const client = await this.ensureConnected()
+
+    if (maxEntries <= 0) {
+      const keys = await client.zRange(this.createdIndexKey, 0, -1)
+      const pipeline = client.multi()
+      if (keys.length > 0) {
+        pipeline.del(keys)
+      }
+      await pipeline.del(this.createdIndexKey).del(this.expiresIndexKey).exec()
+      return
+    }
+
+    let count = await client.zCard(this.createdIndexKey)
+    while (count >= maxEntries) {
+      const oldest = await client.zRange(this.createdIndexKey, 0, 0)
+      if (oldest.length === 0) return
+
+      const oldestKey = oldest[0]
+      await client.multi()
+        .del(oldestKey)
+        .zRem(this.createdIndexKey, oldestKey)
+        .zRem(this.expiresIndexKey, oldestKey)
+        .exec()
+
+      count = await client.zCard(this.createdIndexKey)
+    }
+  }
+
+  private toSnapshotKey(code: string): string {
+    return `${this.keyPrefix}${code}`
+  }
+
+  private async ensureConnected(): Promise<RedisClientCompat> {
+    const client = await this.ensureClient()
+    if (client.isOpen) return client
+
+    if (!this.connectPromise) {
+      this.connectPromise = client.connect().then(() => undefined)
+    }
+
+    try {
+      await this.connectPromise
+    } finally {
+      this.connectPromise = null
+    }
+
+    return client
+  }
+
+  private async ensureClient(): Promise<RedisClientCompat> {
+    if (this.client) return this.client
+    if (this.clientInitPromise) {
+      return this.clientInitPromise
+    }
+
+    this.clientInitPromise = (async () => {
+      const createRedisClient = await loadRedisClientFactory()
+      if (!createRedisClient) {
+        throw new Error('SHARE_SNAPSHOT_STORE=redis requires the "redis" package to be installed.')
+      }
+
+      const client = createRedisClient({ url: this.redisUrl })
+      client.on('error', () => {
+        // Errors surface via awaited commands; avoid noisy unhandled error logging.
+      })
+
+      this.client = client
+      return client
+    })()
+
+    try {
+      return await this.clientInitPromise
+    } finally {
+      this.clientInitPromise = null
+    }
+  }
+}
+
+const resolveStoreMode = (): ShareStoreMode => {
   const envValue = process.env.SHARE_SNAPSHOT_STORE?.trim().toLowerCase()
-  if (envValue === 'memory' || envValue === 'file') {
+  if (envValue === 'memory' || envValue === 'file' || envValue === 'redis') {
     return envValue
   }
 
@@ -248,12 +514,41 @@ const resolveFilePath = (): string => {
   return path.join(process.cwd(), '.data', 'share-snapshots.json')
 }
 
+const resolveRedisUrl = (): string | null => {
+  const candidates = [
+    process.env.SHARE_SNAPSHOT_REDIS_URL,
+    process.env.REDIS_URL
+  ]
+
+  for (const candidate of candidates) {
+    const value = candidate?.trim()
+    if (value) return value
+  }
+
+  return null
+}
+
+const resolveRedisPrefix = (): string => {
+  const prefix = process.env.SHARE_SNAPSHOT_REDIS_PREFIX?.trim()
+  return prefix && prefix.length > 0 ? prefix : 'omnitwin:share:'
+}
+
 let shareSnapshotStore: ShareSnapshotStore | null = null
 
 export const getShareSnapshotStore = (): ShareSnapshotStore => {
   if (shareSnapshotStore) return shareSnapshotStore
 
   const mode = resolveStoreMode()
+  if (mode === 'redis') {
+    const redisUrl = resolveRedisUrl()
+    if (!redisUrl) {
+      throw new Error('SHARE_SNAPSHOT_STORE=redis requires SHARE_SNAPSHOT_REDIS_URL or REDIS_URL.')
+    }
+
+    shareSnapshotStore = new RedisShareSnapshotStore(redisUrl, resolveRedisPrefix())
+    return shareSnapshotStore
+  }
+
   if (mode === 'file') {
     shareSnapshotStore = new FileShareSnapshotStore(resolveFilePath())
     return shareSnapshotStore

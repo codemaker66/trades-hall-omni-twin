@@ -23,9 +23,22 @@ The Next.js app (`apps/web`) now supports short share links via `GET/POST /api/s
 Environment variables:
 
 ```bash
-# Optional: "file" (default) or "memory"
+# Optional: "file" (default), "memory", or "redis"
 SHARE_SNAPSHOT_STORE=file
 
 # Optional: custom snapshot file location when SHARE_SNAPSHOT_STORE=file
 SHARE_SNAPSHOT_FILE_PATH=./.data/share-snapshots.json
+
+# Required when SHARE_SNAPSHOT_STORE=redis
+# Falls back to REDIS_URL if omitted.
+SHARE_SNAPSHOT_REDIS_URL=redis://localhost:6379
+
+# Optional Redis key prefix when SHARE_SNAPSHOT_STORE=redis
+SHARE_SNAPSHOT_REDIS_PREFIX=omnitwin:share:
+```
+
+When using `SHARE_SNAPSHOT_STORE=redis`, install the Redis client in the web workspace:
+
+```bash
+npm install -w apps/web redis
 ```
