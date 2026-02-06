@@ -3,8 +3,8 @@
 import { Scene } from './Scene'
 import { TrashBin } from './TrashBin'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useVenueStore, FurnitureType } from '../../store'
-import { useState, useEffect, useMemo } from 'react'
+import { useVenueStore, type FurnitureType, type ProjectImportMode } from '../../store'
+import { useState, useEffect, useMemo, useRef, type ChangeEvent } from 'react'
 
 export default function VenueViewer() {
   const addItem = useVenueStore((state) => state.addItem)
@@ -41,9 +41,15 @@ export default function VenueViewer() {
   const setScenarioStatus = useVenueStore((state) => state.setScenarioStatus)
   const hasInventoryForType = useVenueStore((state) => state.hasInventoryForType)
   const resetProject = useVenueStore((state) => state.resetProject)
+  const exportProject = useVenueStore((state) => state.exportProject)
+  const importProject = useVenueStore((state) => state.importProject)
 
   const [chairCount, setChairCount] = useState<number>(8)
   const [scenarioName, setScenarioName] = useState('')
+  const [projectTransferNotice, setProjectTransferNotice] = useState<string | null>(null)
+  const [projectTransferError, setProjectTransferError] = useState<string | null>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const pendingImportModeRef = useRef<ProjectImportMode>('replace')
 
   const inventoryUsage = useMemo(() => {
     const usage: Record<FurnitureType, number> = {
@@ -148,6 +154,65 @@ export default function VenueViewer() {
     if (!shouldReset) return
     resetProject()
     setScenarioName('')
+    setProjectTransferNotice(null)
+    setProjectTransferError(null)
+  }
+
+  const handleExportProject = () => {
+    try {
+      const payload = exportProject()
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const filename = `omnitwin-project-${timestamp}.json`
+      const blob = new Blob([payload], { type: 'application/json' })
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      anchor.style.display = 'none'
+      document.body.appendChild(anchor)
+      anchor.click()
+      document.body.removeChild(anchor)
+      window.URL.revokeObjectURL(url)
+
+      setProjectTransferNotice(`Project exported as ${filename}.`)
+      setProjectTransferError(null)
+    } catch {
+      setProjectTransferNotice(null)
+      setProjectTransferError('Project export failed. Please try again.')
+    }
+  }
+
+  const openProjectImportPicker = (mode: ProjectImportMode) => {
+    pendingImportModeRef.current = mode
+    importInputRef.current?.click()
+  }
+
+  const handleImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    if (pendingImportModeRef.current === 'replace') {
+      const shouldReplace = window.confirm('Import and replace the current project on this device?')
+      if (!shouldReplace) return
+    }
+
+    try {
+      const payload = await file.text()
+      const result = importProject(payload, { mode: pendingImportModeRef.current })
+      if (!result.ok) {
+        setProjectTransferNotice(null)
+        setProjectTransferError(result.message)
+        return
+      }
+
+      setProjectTransferNotice(result.message)
+      setProjectTransferError(null)
+      setScenarioName('')
+    } catch {
+      setProjectTransferNotice(null)
+      setProjectTransferError('Project import failed. Please try again.')
+    }
   }
 
   const handleConfirmChairs = () => {
@@ -499,6 +564,47 @@ export default function VenueViewer() {
                 Reset Project
               </button>
             </div>
+
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={handleImportFileChange}
+            />
+
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <button
+                onClick={handleExportProject}
+                className="px-2 py-1 text-xs bg-[#3e2723] border border-[#8d6e63] rounded-sm text-[#d7ccc8] hover:bg-[#4e342e]"
+              >
+                Export
+              </button>
+              <button
+                onClick={() => openProjectImportPicker('merge')}
+                className="px-2 py-1 text-xs bg-[#3e2723] border border-[#66bb6a] rounded-sm text-[#b9f6ca] hover:bg-[#4e342e]"
+              >
+                Import Merge
+              </button>
+              <button
+                onClick={() => openProjectImportPicker('replace')}
+                className="px-2 py-1 text-xs bg-[#3e2723] border border-[#ffb74d] rounded-sm text-[#ffcc80] hover:bg-[#4e342e]"
+              >
+                Import Replace
+              </button>
+            </div>
+
+            {projectTransferNotice && (
+              <div className="mt-2 bg-[#1f3324] border border-[#66bb6a] text-[#b9f6ca] rounded-sm px-2 py-1 text-[11px]">
+                {projectTransferNotice}
+              </div>
+            )}
+
+            {projectTransferError && (
+              <div className="mt-2 bg-[#3e1f1f] border border-[#ef5350] text-[#ef9a9a] rounded-sm px-2 py-1 text-[11px]">
+                {projectTransferError}
+              </div>
+            )}
           </div>
 
           {inventoryWarning && (

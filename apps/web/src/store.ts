@@ -4,6 +4,11 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 export type FurnitureType = 'round-table' | 'trestle-table' | 'chair' | 'platform'
 export type TransformMode = 'translate' | 'rotate'
 export type ScenarioStatus = 'draft' | 'review' | 'approved'
+export type ProjectImportMode = 'replace' | 'merge'
+export type ProjectImportResult = {
+    ok: boolean
+    message: string
+}
 
 export interface FurnitureItem {
     id: string
@@ -61,6 +66,8 @@ export interface Scenario {
 const HISTORY_LIMIT = 200
 const VENUE_STORE_STORAGE_KEY = 'omnitwin_venue_store_v1'
 const VENUE_STORE_VERSION = 1
+const PROJECT_EXPORT_FORMAT = 'omnitwin-venue-project'
+const PROJECT_EXPORT_VERSION = 1
 
 const DEFAULT_INVENTORY: InventoryItem[] = [
     {
@@ -113,6 +120,16 @@ const cloneItem = (item: FurnitureItem): FurnitureItem => ({
 const cloneItems = (items: FurnitureItem[]) => items.map(cloneItem)
 
 const cloneInventory = (inventory: InventoryItem[]) => inventory.map((item) => ({ ...item }))
+
+const cloneScenario = (scenario: Scenario): Scenario => ({
+    ...scenario,
+    snapshot: {
+        items: cloneItems(scenario.snapshot.items),
+        transformMode: scenario.snapshot.transformMode
+    }
+})
+
+const cloneScenarios = (scenarios: Scenario[]) => scenarios.map(cloneScenario)
 
 const emptyInventoryUsage = (): InventoryUsage => ({
     'round-table': 0,
@@ -348,6 +365,8 @@ interface VenueState {
     renameScenario: (id: string, name: string) => void
     setScenarioStatus: (id: string, status: ScenarioStatus) => void
     resetProject: () => void
+    exportProject: () => string
+    importProject: (payload: string, options?: { mode?: ProjectImportMode }) => ProjectImportResult
 
     canUndo: boolean
     canRedo: boolean
@@ -383,6 +402,13 @@ type PersistedVenueState = Pick<
     'items' | 'snappingEnabled' | 'snapGrid' | 'transformMode' | 'inventoryCatalog' | 'scenarios' | 'activeScenarioId'
 >
 
+type ProjectExportDocument = {
+    format: typeof PROJECT_EXPORT_FORMAT
+    version: number
+    exportedAt: string
+    data: PersistedVenueState
+}
+
 const buildDefaultPersistedState = (): PersistedVenueState => ({
     items: [],
     snappingEnabled: true,
@@ -392,6 +418,60 @@ const buildDefaultPersistedState = (): PersistedVenueState => ({
     scenarios: [],
     activeScenarioId: null
 })
+
+const clonePersistedVenueState = (state: PersistedVenueState): PersistedVenueState => ({
+    items: cloneItems(state.items),
+    snappingEnabled: state.snappingEnabled,
+    snapGrid: state.snapGrid,
+    transformMode: state.transformMode,
+    inventoryCatalog: cloneInventory(state.inventoryCatalog),
+    scenarios: cloneScenarios(state.scenarios),
+    activeScenarioId: state.activeScenarioId
+})
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null
+
+const looksLikePersistedVenueState = (value: unknown): value is Partial<PersistedVenueState> => {
+    if (!isObjectRecord(value)) return false
+    return (
+        'items' in value ||
+        'inventoryCatalog' in value ||
+        'scenarios' in value ||
+        'transformMode' in value ||
+        'snappingEnabled' in value ||
+        'snapGrid' in value ||
+        'activeScenarioId' in value
+    )
+}
+
+const createStoreId = (): string => {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+        return crypto.randomUUID()
+    }
+
+    return `id_${Date.now()}_${Math.random().toString(16).slice(2)}`
+}
+
+const dedupeScenarioName = (name: string, usedNames: Set<string>): string => {
+    const baseName = name.trim().length > 0 ? name.trim() : 'Scenario'
+    const lowerBase = baseName.toLowerCase()
+    if (!usedNames.has(lowerBase)) {
+        usedNames.add(lowerBase)
+        return baseName
+    }
+
+    let suffix = 2
+    while (true) {
+        const candidate = `${baseName} (${suffix})`
+        const lowerCandidate = candidate.toLowerCase()
+        if (!usedNames.has(lowerCandidate)) {
+            usedNames.add(lowerCandidate)
+            return candidate
+        }
+        suffix += 1
+    }
+}
 
 const sanitizePersistedState = (raw: unknown): PersistedVenueState => {
     const defaults = buildDefaultPersistedState()
@@ -449,6 +529,159 @@ const sanitizePersistedState = (raw: unknown): PersistedVenueState => {
         }),
         scenarios,
         activeScenarioId
+    }
+}
+
+const createPersistedStateFromVenueState = (state: Pick<
+    VenueState,
+    'items' | 'snappingEnabled' | 'snapGrid' | 'transformMode' | 'inventoryCatalog' | 'scenarios' | 'activeScenarioId'
+>): PersistedVenueState => ({
+    items: cloneItems(state.items),
+    snappingEnabled: state.snappingEnabled,
+    snapGrid: state.snapGrid,
+    transformMode: state.transformMode,
+    inventoryCatalog: cloneInventory(state.inventoryCatalog),
+    scenarios: cloneScenarios(state.scenarios),
+    activeScenarioId: state.activeScenarioId
+})
+
+const createProjectExportDocument = (state: PersistedVenueState): ProjectExportDocument => ({
+    format: PROJECT_EXPORT_FORMAT,
+    version: PROJECT_EXPORT_VERSION,
+    exportedAt: nowIso(),
+    data: clonePersistedVenueState(state)
+})
+
+const parseImportedPersistedState = (
+    payload: string
+): { ok: true, state: PersistedVenueState } | { ok: false, message: string } => {
+    const trimmed = payload.trim()
+    if (!trimmed) {
+        return { ok: false, message: 'Import failed: the file is empty.' }
+    }
+
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(trimmed)
+    } catch {
+        return { ok: false, message: 'Import failed: invalid JSON file.' }
+    }
+
+    if (!isObjectRecord(parsed)) {
+        return { ok: false, message: 'Import failed: unsupported project payload.' }
+    }
+
+    let rawState: unknown = parsed
+    if ('data' in parsed || 'format' in parsed || 'version' in parsed) {
+        const format = parsed.format
+        if (typeof format === 'string' && format !== PROJECT_EXPORT_FORMAT) {
+            return { ok: false, message: `Import failed: unsupported project format "${format}".` }
+        }
+
+        const version = parsed.version
+        if (typeof version === 'number' && version > PROJECT_EXPORT_VERSION) {
+            return {
+                ok: false,
+                message: `Import failed: project version ${version} is newer than supported version ${PROJECT_EXPORT_VERSION}.`
+            }
+        }
+
+        if (!('data' in parsed)) {
+            return { ok: false, message: 'Import failed: missing project data payload.' }
+        }
+
+        rawState = parsed.data
+    }
+
+    if (!looksLikePersistedVenueState(rawState)) {
+        return { ok: false, message: 'Import failed: file does not look like an OmniTwin project export.' }
+    }
+
+    return { ok: true, state: sanitizePersistedState(rawState) }
+}
+
+const mergeInventoryCatalogForImport = (
+    currentInventory: InventoryItem[],
+    importedInventory: InventoryItem[]
+): InventoryItem[] => {
+    const currentByType = new Map(currentInventory.map((item) => [item.furnitureType, item]))
+    const importedByType = new Map(importedInventory.map((item) => [item.furnitureType, item]))
+
+    return DEFAULT_INVENTORY.map((fallback) => {
+        const currentItem = currentByType.get(fallback.furnitureType) ?? fallback
+        const importedItem = importedByType.get(fallback.furnitureType)
+        if (!importedItem) {
+            return { ...currentItem }
+        }
+
+        const quantityTotal = Math.max(currentItem.quantityTotal, importedItem.quantityTotal)
+        const quantityReserved = Math.min(
+            quantityTotal,
+            Math.max(currentItem.quantityReserved, importedItem.quantityReserved)
+        )
+        const seatsPerItem = currentItem.seatsPerItem ?? importedItem.seatsPerItem
+
+        return {
+            ...currentItem,
+            quantityTotal,
+            quantityReserved,
+            seatsPerItem
+        }
+    })
+}
+
+const mergePersistedVenueStates = (
+    current: PersistedVenueState,
+    imported: PersistedVenueState
+): PersistedVenueState => {
+    const mergedItems = cloneItems(current.items)
+    const usedItemIds = new Set(mergedItems.map((item) => item.id))
+    for (const importedItem of imported.items) {
+        let nextId = importedItem.id
+        while (!nextId || usedItemIds.has(nextId)) {
+            nextId = createStoreId()
+        }
+        usedItemIds.add(nextId)
+        mergedItems.push({
+            ...importedItem,
+            id: nextId,
+            position: cloneTuple3(importedItem.position),
+            rotation: cloneTuple3(importedItem.rotation)
+        })
+    }
+
+    const mergedScenarios = cloneScenarios(current.scenarios)
+    const usedScenarioIds = new Set(mergedScenarios.map((scenario) => scenario.id))
+    const usedScenarioNames = new Set(mergedScenarios.map((scenario) => scenario.name.trim().toLowerCase()))
+    let importedActiveScenarioId: string | null = null
+
+    for (const importedScenario of imported.scenarios) {
+        let nextScenarioId = importedScenario.id
+        while (!nextScenarioId || usedScenarioIds.has(nextScenarioId)) {
+            nextScenarioId = createStoreId()
+        }
+        usedScenarioIds.add(nextScenarioId)
+
+        const nextScenarioName = dedupeScenarioName(importedScenario.name, usedScenarioNames)
+        const nextScenario = cloneScenario(importedScenario)
+        nextScenario.id = nextScenarioId
+        nextScenario.name = nextScenarioName
+
+        if (imported.activeScenarioId === importedScenario.id) {
+            importedActiveScenarioId = nextScenarioId
+        }
+
+        mergedScenarios.push(nextScenario)
+    }
+
+    return {
+        items: mergedItems,
+        snappingEnabled: current.snappingEnabled,
+        snapGrid: current.snapGrid,
+        transformMode: current.transformMode,
+        inventoryCatalog: mergeInventoryCatalogForImport(current.inventoryCatalog, imported.inventoryCatalog),
+        scenarios: mergedScenarios,
+        activeScenarioId: current.activeScenarioId ?? importedActiveScenarioId
     }
 }
 
@@ -674,6 +907,41 @@ export const useVenueStore = create<VenueState>()(
         ...buildDefaultPersistedState(),
         ...INITIAL_TRANSIENT_STATE
     })),
+
+    exportProject: () => {
+        const persistedState = createPersistedStateFromVenueState(get())
+        const projectDocument = createProjectExportDocument(persistedState)
+        return JSON.stringify(projectDocument, null, 2)
+    },
+
+    importProject: (payload, options) => {
+        const mode: ProjectImportMode = options?.mode === 'merge' ? 'merge' : 'replace'
+        const parsedImport = parseImportedPersistedState(payload)
+        if (!parsedImport.ok) {
+            return parsedImport
+        }
+
+        set((state) => {
+            const currentPersisted = createPersistedStateFromVenueState(state)
+            const nextPersisted = mode === 'merge'
+                ? mergePersistedVenueStates(currentPersisted, parsedImport.state)
+                : clonePersistedVenueState(parsedImport.state)
+
+            return {
+                ...historyBeforeMutation(state, true),
+                ...nextPersisted,
+                ...INITIAL_TRANSIENT_STATE,
+                inventoryWarning: getInventoryWarning(nextPersisted.inventoryCatalog, computeInventoryUsage(nextPersisted.items))
+            }
+        })
+
+        return {
+            ok: true,
+            message: mode === 'merge'
+                ? 'Project imported in merge mode.'
+                : 'Project imported and replaced current project.'
+        }
+    },
 
     beginHistoryBatch: () => set((state) => {
         if (state.historyBatch) return {}
@@ -960,21 +1228,7 @@ export const useVenueStore = create<VenueState>()(
         name: VENUE_STORE_STORAGE_KEY,
         version: VENUE_STORE_VERSION,
         storage: createJSONStorage(() => localStorage),
-        partialize: (state) => ({
-            items: cloneItems(state.items),
-            snappingEnabled: state.snappingEnabled,
-            snapGrid: state.snapGrid,
-            transformMode: state.transformMode,
-            inventoryCatalog: cloneInventory(state.inventoryCatalog),
-            scenarios: state.scenarios.map((scenario) => ({
-                ...scenario,
-                snapshot: {
-                    items: cloneItems(scenario.snapshot.items),
-                    transformMode: scenario.snapshot.transformMode
-                }
-            })),
-            activeScenarioId: state.activeScenarioId
-        }),
+        partialize: (state) => createPersistedStateFromVenueState(state),
         merge: (persistedState, currentState) => mergeRehydratedState(persistedState, currentState),
         migrate: (persistedState) => sanitizePersistedState(persistedState)
     })
