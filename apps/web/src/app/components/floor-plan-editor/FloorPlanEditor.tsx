@@ -4,6 +4,7 @@ import { useRef, useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { EditorToolbar } from './EditorToolbar'
 import { CatalogSidebar } from './CatalogSidebar'
+import { CapacityWarning } from './CapacityWarning'
 
 // Konva must be client-only (uses window)
 const Canvas2D = dynamic(() => import('./Canvas2D').then((m) => m.Canvas2D), { ssr: false })
@@ -34,8 +35,9 @@ export function FloorPlanEditor() {
       <CatalogSidebar />
       <div className="flex flex-col flex-1 min-w-0">
         <EditorToolbar />
-        <div ref={containerRef} className="flex-1 overflow-hidden">
+        <div ref={containerRef} className="relative flex-1 overflow-hidden">
           <Canvas2D width={size.width} height={size.height} />
+          <CapacityWarning maxCapacity={500} />
         </div>
       </div>
     </div>

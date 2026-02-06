@@ -6,6 +6,7 @@ import type Konva from 'konva'
 import { Grid2D } from './Grid2D'
 import { FurnitureItem2D } from './FurnitureItem2D'
 import { SelectionRect } from './SelectionRect'
+import { SpacingOverlay } from './SpacingOverlay'
 import { useFloorPlanStore, snapToGrid2D } from './store'
 
 const PIXELS_PER_FOOT = 40
@@ -262,6 +263,11 @@ export function Canvas2D({ width, height }: Canvas2DProps) {
             onDragEnd={handleDragEnd}
           />
         ))}
+      </Layer>
+
+      {/* Spacing violations */}
+      <Layer>
+        <SpacingOverlay items={items} minSpacingFt={3} scale={scale} />
       </Layer>
 
       {/* Selection overlay */}
