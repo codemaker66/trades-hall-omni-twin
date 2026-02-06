@@ -75,6 +75,8 @@ interface FloorPlanState {
   undo: () => void
   redo: () => void
 
+  loadTemplate: (items: Omit<FloorPlanItem, 'id' | 'locked'>[]) => void
+
   getMetrics: () => { chairs: number; tables: number; stages: number; totalSeats: number }
 }
 
@@ -191,6 +193,24 @@ export const useFloorPlanStore = create<FloorPlanState>()((set, get) => ({
     set({
       items: state.items.filter((i) => !ids.includes(i.id)),
       selectedIds: state.selectedIds.filter((id) => !ids.includes(id)),
+      past: pushHistory(state.past, snap),
+      future: [],
+      canUndo: true,
+      canRedo: false,
+    })
+  },
+
+  loadTemplate: (templateItems) => {
+    const state = get()
+    const snap = snapshot(state)
+    const newItems: FloorPlanItem[] = templateItems.map((item) => ({
+      ...item,
+      id: genId(),
+      locked: false,
+    }))
+    set({
+      items: newItems,
+      selectedIds: [],
       past: pushHistory(state.past, snap),
       future: [],
       canUndo: true,

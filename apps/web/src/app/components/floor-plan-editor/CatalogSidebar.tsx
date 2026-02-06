@@ -1,6 +1,7 @@
 'use client'
 
 import { useFloorPlanStore, type FurnitureCategory } from './store'
+import { templates } from './templates'
 
 interface CatalogEntry {
   name: string
@@ -32,6 +33,7 @@ const categoryColors: Record<FurnitureCategory, string> = {
 
 export function CatalogSidebar() {
   const addItem = useFloorPlanStore((s) => s.addItem)
+  const loadTemplate = useFloorPlanStore((s) => s.loadTemplate)
   const planWidthFt = useFloorPlanStore((s) => s.planWidthFt)
   const planHeightFt = useFloorPlanStore((s) => s.planHeightFt)
 
@@ -52,7 +54,7 @@ export function CatalogSidebar() {
       <div className="px-3 py-3 border-b border-surface-25">
         <h3 className="text-xs font-semibold text-surface-80 uppercase tracking-wider">Furniture</h3>
       </div>
-      <div className="flex-1 p-2 space-y-1">
+      <div className="flex-1 p-2 space-y-1 overflow-y-auto">
         {catalogItems.map((entry) => (
           <button
             key={entry.name}
@@ -66,6 +68,25 @@ export function CatalogSidebar() {
             </div>
           </button>
         ))}
+      </div>
+
+      {/* Templates */}
+      <div className="border-t border-surface-25">
+        <div className="px-3 py-3 border-b border-surface-25">
+          <h3 className="text-xs font-semibold text-surface-80 uppercase tracking-wider">Templates</h3>
+        </div>
+        <div className="p-2 space-y-1">
+          {templates.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => loadTemplate(t.items)}
+              className="w-full px-2 py-2 rounded-lg text-left hover:bg-surface-15 transition-colors group"
+            >
+              <p className="text-xs font-medium text-surface-80 group-hover:text-surface-90">{t.name}</p>
+              <p className="text-[10px] text-surface-60">{t.description}</p>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )
