@@ -32,7 +32,7 @@ export function EditorToolbar() {
   }
 
   return (
-    <div className="h-12 flex items-center justify-between px-4 bg-surface-5 border-b border-surface-25 text-sm">
+    <div className="flex items-center justify-between px-4 flex-1 text-sm">
       {/* Left: Tools */}
       <div className="flex items-center gap-1">
         <button
