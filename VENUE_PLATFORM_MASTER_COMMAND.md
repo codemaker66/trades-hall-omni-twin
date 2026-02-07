@@ -1,6 +1,21 @@
 # Claude Code Master Command: Venue Planning Platform
 
 > **Purpose**: Feed this document to Claude Code alongside your existing codebase to systematically build it into a production-grade venue planning platform. This is designed to be executed as a phased series of Claude Code sessions — NOT all at once.
+
+> ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
+>
+> Claude Code must NEVER:
+> - Omit features, techniques, or subsystems to fit within a single session
+> - Simplify implementations to make them "easier" or "more practical"
+> - Replace a specified technique with a simpler alternative without explicit approval
+> - Skip sections because they seem redundant or low-priority
+> - Truncate implementations to keep diffs small — instead, split across commits
+>
+> If a task is too large for one session: split it into sub-tasks across multiple
+> sessions. Document what remains in PROGRESS.md and pick it up next session.
+> The project must contain the FULL depth of every technique specified.
+> "Good enough" is not good enough. Every feature exists at maximum fidelity.
+
 >
 > **How to use**: Start each Claude Code session by saying: "Read VENUE_PLATFORM_MASTER_COMMAND.md, assess the current state of the codebase, and execute the next incomplete phase." Claude Code should check off completed tasks and pick up where it left off.
 
