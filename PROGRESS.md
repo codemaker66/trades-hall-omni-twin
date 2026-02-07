@@ -388,6 +388,16 @@
 - [x] Op ID generation: replicaId:counter format with parseOpId
 - [x] 33 tests (25 unit + 8 property-based CRDT correctness proofs)
 
+### T4: WebGPU Compute Shaders for Real-Time Spatial Analysis
+- [x] Types: AABB2D, Point2D, RoomGeometry, AnalysisItem, CollisionResult, SightlineResult, CrowdFlowResult, GpuCapabilities
+- [x] Parallel collision detection: WGSL compute shader (workgroup_size 64, atomicOr bitmask) + CPU fallback (O(N²) AABB pairs)
+- [x] Sightline analysis: WGSL with chairSightlines + heatmapSightlines entry points, ray-AABB slab intersection
+- [x] CPU sightline fallback: per-chair raycasting + grid heatmap with shadow casting behind obstacles
+- [x] Crowd flow evacuation: WGSL agent update with nearest-exit pathfinding, obstacle/agent repulsion
+- [x] CPU crowd flow: full agent-based sim with density tracking, bottleneck detection, multi-exit support
+- [x] Exported from engine index.ts with aliased names (gpuDetectCollisionsCPU, gpuAnalyzeSightlinesCPU, gpuSimulateCrowdFlowCPU)
+- [x] 25 tests (collision 5, sightlines 6, crowd flow 6, WGSL validation 3, property-based 5)
+
 ### T5: Property-Based Testing (fast-check)
 - [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
 - [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
@@ -414,3 +424,4 @@
 | 2026-02-07 | T1 | Constraint solver for automatic layout generation: grid discretization, hard constraints (overlap, bounds, obstacle, exit clearance, aisle width), soft objectives (sightlines, symmetry, exit access), greedy MRV placement + simulated annealing optimizer. 38 tests. Total: 513 tests (259 engine + 29 shared + 225 web). |
 | 2026-02-07 | T6 | Custom binary wire protocol: HLC clock, binary encoder/decoder (DataView), batch framing, delta compression (int16 fixed-point), deadzone filtering. 51 tests. Total: 564 tests (259 engine + 29 shared + 225 web + 51 wire-protocol). |
 | 2026-02-07 | T3 | Spatial intent CRDT: displacement-based merge (both concurrent intents preserved), SpatialDocument with op log + incremental cache, delta sync protocol, add-wins semantics. 33 tests including 8 property-based CRDT proofs (SEC, commutativity, associativity, idempotency, convergence). Total: 597 tests. |
+| 2026-02-07 | T4 | WebGPU compute shaders for spatial analysis: WGSL shaders + CPU fallbacks for parallel collision detection, sightline analysis with heatmaps, crowd flow evacuation simulation. 25 tests including property-based. Total: 622 tests (284 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
