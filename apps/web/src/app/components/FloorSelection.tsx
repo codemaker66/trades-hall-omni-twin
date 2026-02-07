@@ -54,6 +54,16 @@ export const FloorSelection = () => {
 
         const handlePointerMove = (e: PointerEvent) => {
             if (!activeRef.current) return
+            // Cancel floor selection if a furniture drag started after our pointerdown
+            if (useVenueStore.getState().isDragging) {
+                activeRef.current = false
+                startRef.current = null
+                endRef.current = null
+                setActive(false)
+                setStart(null)
+                setEnd(null)
+                return
+            }
             const hit = getFloorPoint(e)
             if (!hit) return
             endRef.current = hit.clone()
@@ -137,6 +147,7 @@ export const FloorSelection = () => {
             element.removeEventListener('pointermove', handlePointerMove)
             window.removeEventListener('pointerup', handlePointerUp)
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [camera, draggedItemType, gl, raycaster])
 
     if (!active || !start || !end) return null
@@ -152,10 +163,22 @@ export const FloorSelection = () => {
                 <planeGeometry args={[width, depth]} />
                 <meshBasicMaterial color="#7c6fff" transparent opacity={0.12} />
             </mesh>
-            <lineSegments position={[centerX, 0.021, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
-                <edgesGeometry args={[new THREE.PlaneGeometry(width, depth)]} />
-                <lineBasicMaterial color="#b7abff" transparent opacity={0.9} />
-            </lineSegments>
+            <SelectionOutline centerX={centerX} centerZ={centerZ} width={width} depth={depth} />
         </group>
+    )
+}
+
+const SelectionOutline = ({ centerX, centerZ, width, depth }: { centerX: number, centerZ: number, width: number, depth: number }) => {
+    const edgesGeom = useMemo(() => {
+        const plane = new THREE.PlaneGeometry(width, depth)
+        const edges = new THREE.EdgesGeometry(plane)
+        plane.dispose()
+        return edges
+    }, [width, depth])
+
+    return (
+        <lineSegments position={[centerX, 0.021, centerZ]} rotation={[-Math.PI / 2, 0, 0]} geometry={edgesGeom}>
+            <lineBasicMaterial color="#b7abff" transparent opacity={0.9} />
+        </lineSegments>
     )
 }

@@ -1,8 +1,13 @@
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useMemo } from 'react'
 import { useVenueStore, FurnitureType } from '../../store'
 import { RoundTable6ft, TrestleTable6ft, Chair, Platform } from './Furniture'
 import * as THREE from 'three'
 import { useThree } from '@react-three/fiber'
+import { _raycaster, _raycaster2, _plane, _vec3A, _vec3B, _vec3C, _vec3D, _vec3E, _box3A, _box3B, _quatA, _quatB, _downDir, _yAxis } from './threePool'
+import { FURNITURE, PHYSICS, SNAP, SELECTION } from '../../config/scene'
+import { snapToGrid, computeTrestleSnap, boxesOverlap, clampToPlatformBounds, type TrestleSnapConfig } from './engine/drag'
+import { applySelectionModifier, resolveClickTargetIds, findDragAnchor } from './engine/selection'
+import { findGroupById, raycastDownForStack, getLocalBounds } from './engine/raycast'
 
 interface InteractiveFurnitureProps {
     id: string
@@ -10,107 +15,95 @@ interface InteractiveFurnitureProps {
     type: FurnitureType
     position: [number, number, number]
     rotation: [number, number, number]
-    onRegister: (id: string, ref: THREE.Group) => void
+    onRegister: (id: string, ref: THREE.Group | null) => void
 }
 
-export const InteractiveFurniture = ({ id, groupId, type, position, rotation, onRegister }: InteractiveFurnitureProps) => {
+const trestleSnapConfig: TrestleSnapConfig = {
+    length: FURNITURE['trestle-table'].length,
+    depth: FURNITURE['trestle-table'].depth,
+    alongTolerance: SNAP.trestle.alongTolerance,
+    acrossTolerance: SNAP.trestle.acrossTolerance,
+    angleCos: SNAP.trestle.angleCosThreshold,
+}
+
+type DragSession = {
+    active: boolean
+    initialPositions: Map<string, [number, number, number]>
+    groups: Map<string, THREE.Group>
+    originX: number
+    originZ: number
+    offsetX: number
+    offsetZ: number
+    bottomOffsets: Map<string, number>
+}
+
+export const InteractiveFurniture = React.memo(({ id, groupId, type, position, rotation, onRegister }: InteractiveFurnitureProps) => {
     const { scene } = useThree()
     const selectedIds = useVenueStore((state) => state.selectedIds)
     const setSelection = useVenueStore((state) => state.setSelection)
     const setIsDragging = useVenueStore((state) => state.setIsDragging)
-    const updateItem = useVenueStore((state) => state.updateItem)
     const snappingEnabled = useVenueStore((state) => state.snappingEnabled)
     const snapGrid = useVenueStore((state) => state.snapGrid)
 
-    // Check if selected
     const isSelected = selectedIds.includes(id)
 
-    // Determine which model to render
     const Component =
         type === 'round-table' ? RoundTable6ft :
             type === 'trestle-table' ? TrestleTable6ft :
                 type === 'chair' ? Chair :
                     Platform
 
-    // Drag State
-    const dragOffset = useRef(new THREE.Vector3())
     const isDraggingRef = useRef(false)
     const groupRef = useRef<THREE.Group>(null)
     const objectBounds = useRef({ centerY: 0, bottomOffset: 0, halfX: 0, halfZ: 0, ready: false })
-    const stackRayOriginY = 50
-    const selectionBottomOffsets = useRef<{ [id: string]: number }>({})
-    const trestleDims = { length: 1.8, depth: 0.76 }
-    const trestleSnap = { along: 0.25, across: 0.12, angleCos: Math.cos(THREE.MathUtils.degToRad(6)) }
 
-    // Register ref with parent on mount
+    const drag = useRef<DragSession>({
+        active: false,
+        initialPositions: new Map(),
+        groups: new Map(),
+        originX: 0, originZ: 0,
+        offsetX: 0, offsetZ: 0,
+        bottomOffsets: new Map()
+    })
+
     useEffect(() => {
-        if (groupRef.current) {
-            onRegister(id, groupRef.current)
-        }
+        if (groupRef.current) onRegister(id, groupRef.current)
+        return () => { onRegister(id, null) }
     }, [id, onRegister])
 
-    const openChairPrompt = useVenueStore((state) => state.openChairPrompt)
-    const [selectionBounds, setSelectionBounds] = useState<{ center: THREE.Vector3, size: THREE.Vector3 } | null>(null)
-    const boxesOverlap = (a: THREE.Box3, b: THREE.Box3, eps = 0.001) => {
-        return (
-            a.max.x > b.min.x + eps &&
-            a.min.x < b.max.x - eps &&
-            a.max.y > b.min.y + eps &&
-            a.min.y < b.max.y - eps &&
-            a.max.z > b.min.z + eps &&
-            a.min.z < b.max.z - eps
-        )
-    }
-    const getLocalBounds = (root: THREE.Object3D) => {
-        const box = new THREE.Box3()
-        root.updateWorldMatrix(true, false)
-        const inv = root.matrixWorld.clone().invert()
-
-        root.traverse((obj) => {
-            if (obj.userData?.skipBounds) return
-            const mesh = obj as THREE.Mesh
-            if (!mesh.isMesh || !mesh.geometry) return
-            const geom = mesh.geometry
-            if (!geom.boundingBox) geom.computeBoundingBox()
-            if (!geom.boundingBox) return
-            const localBox = geom.boundingBox.clone()
-            localBox.applyMatrix4(mesh.matrixWorld)
-            localBox.applyMatrix4(inv)
-            box.union(localBox)
-        })
-
-        return box
-    }
-
     useEffect(() => {
-        if (!isSelected || !groupRef.current) {
-            setSelectionBounds(null)
-            return
+        if (groupRef.current && !isDraggingRef.current) {
+            groupRef.current.position.set(position[0], position[1], position[2])
+            groupRef.current.rotation.set(rotation[0], rotation[1], rotation[2])
         }
+    }, [position, rotation])
 
-        const box = getLocalBounds(groupRef.current)
-        if (box.isEmpty()) return
+    const openChairPrompt = useVenueStore((state) => state.openChairPrompt)
 
-        const center = new THREE.Vector3()
-        const size = new THREE.Vector3()
-        box.getCenter(center)
-        box.getSize(size)
+    const selectionHighlightGeom = useMemo(() => {
+        if (!isSelected) return null
+        const sb = FURNITURE[type]
+        return {
+            box: new THREE.BoxGeometry(sb.selectionSize[0] * SELECTION.boxScale, sb.selectionSize[1] * SELECTION.boxScale, sb.selectionSize[2] * SELECTION.boxScale),
+            edges: new THREE.BoxGeometry(sb.selectionSize[0] * SELECTION.edgesScale, sb.selectionSize[1] * SELECTION.edgesScale, sb.selectionSize[2] * SELECTION.edgesScale)
+        }
+    }, [type, isSelected])
 
-        setSelectionBounds({ center, size })
-    }, [isSelected, type])
+    const selectionBounds = isSelected ? { center: FURNITURE[type].selectionCenter, size: FURNITURE[type].selectionSize } : null
+
     const ensureObjectBounds = () => {
         if (objectBounds.current.ready || !groupRef.current) return
 
-        const box = new THREE.Box3().setFromObject(groupRef.current)
-        if (box.isEmpty()) return
+        _box3A.setFromObject(groupRef.current)
+        if (_box3A.isEmpty()) return
 
-        const size = new THREE.Vector3()
-        const center = new THREE.Vector3()
-        box.getSize(size)
-        box.getCenter(center)
+        const size = _vec3A
+        const center = _vec3B
+        _box3A.getSize(size)
+        _box3A.getCenter(center)
 
         objectBounds.current.centerY = center.y - groupRef.current.position.y
-        objectBounds.current.bottomOffset = groupRef.current.position.y - box.min.y
+        objectBounds.current.bottomOffset = groupRef.current.position.y - _box3A.min.y
         objectBounds.current.halfX = size.x / 2
         objectBounds.current.halfZ = size.z / 2
         objectBounds.current.ready = true
@@ -132,20 +125,11 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                 e.stopPropagation()
 
                 const state = useVenueStore.getState()
-                let idsToTarget = [id]
                 const isCtrl = e.ctrlKey || e.metaKey
-                if (groupId && !isCtrl) {
-                    idsToTarget = state.items.filter(i => i.groupId === groupId).map(i => i.id)
-                }
-
+                const idsToTarget = resolveClickTargetIds(id, groupId, isCtrl, state.items)
                 const isMultiSelect = e.shiftKey || isCtrl
-                if (isMultiSelect) {
-                    const allSelected = idsToTarget.every(i => state.selectedIds.includes(i))
-                    if (allSelected) setSelection(state.selectedIds.filter(i => !idsToTarget.includes(i)))
-                    else setSelection([...new Set([...state.selectedIds, ...idsToTarget])])
-                } else {
-                    setSelection(idsToTarget)
-                }
+                const newSelection = applySelectionModifier(state.selectedIds, idsToTarget, isMultiSelect)
+                setSelection(newSelection)
             }}
             onPointerDown={(e) => {
                 if (e.button !== 0) return
@@ -156,324 +140,233 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
 
                 isDraggingRef.current = true
                 setIsDragging(true)
+                useVenueStore.getState().beginHistoryBatch()
                 ensureObjectBounds()
-                const state = useVenueStore.getState()
-                selectionBottomOffsets.current = {}
 
-                if (state.selectedIds.length > 1) {
-                    state.selectedIds.forEach((selectedId) => {
-                        const obj = scene.getObjectByProperty('userData.id', selectedId)
-                        if (!obj) return
-                        const box = new THREE.Box3().setFromObject(obj)
-                        selectionBottomOffsets.current[selectedId] = box.isEmpty() ? 0 : obj.position.y - box.min.y
-                    })
+                const state = useVenueStore.getState()
+                const selectedItems = state.items.filter(i => state.selectedIds.includes(i.id))
+
+                const d = drag.current
+                d.active = true
+                d.initialPositions.clear()
+                d.groups.clear()
+                d.bottomOffsets.clear()
+                d.originX = position[0]
+                d.originZ = position[2]
+
+                for (const item of selectedItems) {
+                    d.initialPositions.set(item.id, [item.position[0], item.position[1], item.position[2]])
+                    const group = item.id === id
+                        ? groupRef.current
+                        : findGroupById(scene, item.id)
+                    if (group) d.groups.set(item.id, group)
                 }
 
-                // Calculate Drag Offset relative to the Floor Plane (Y=0)
-                // This prevents "jumping" when we start dragging from a non-zero height (like on a stack)
-                // We project the click onto the floor, compare to object position's distinct X/Z.
+                if (selectedItems.length > 1) {
+                    for (const item of selectedItems) {
+                        const group = d.groups.get(item.id)
+                        if (!group) continue
+                        _box3A.setFromObject(group)
+                        d.bottomOffsets.set(item.id, _box3A.isEmpty() ? 0 : group.position.y - _box3A.min.y)
+                    }
+                }
 
-                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-                const intersect = new THREE.Vector3()
-                const raycaster = new THREE.Raycaster()
-                raycaster.setFromCamera(e.pointer, e.camera)
-                raycaster.ray.intersectPlane(plane, intersect)
+                _plane.normal.set(0, 1, 0)
+                _plane.constant = 0
+                _raycaster.setFromCamera(e.pointer, e.camera)
+                _raycaster.ray.intersectPlane(_plane, _vec3A)
 
-                // Record the offset between the exact mouse ray hitting the floor 
-                // and the object's current X/Z position.
-                // We ignore Y because we will control Y explicitly via stacking logic.
-                if (intersect) {
-                    dragOffset.current.set(intersect.x - position[0], 0, intersect.z - position[2])
+                if (_vec3A) {
+                    d.offsetX = _vec3A.x - position[0]
+                    d.offsetZ = _vec3A.z - position[2]
                 }
             }}
             onPointerUp={(e) => {
-                if (isDraggingRef.current) {
-                    e.stopPropagation()
-                    const target = e.target as HTMLElement
-                    target.releasePointerCapture(e.pointerId)
-                    isDraggingRef.current = false
-                    setIsDragging(false)
+                if (!isDraggingRef.current) return
+                e.stopPropagation()
+                const target = e.target as HTMLElement
+                target.releasePointerCapture(e.pointerId)
+
+                isDraggingRef.current = false
+                const d = drag.current
+                d.active = false
+
+                const state = useVenueStore.getState()
+                const updates: { id: string, changes: { position: [number, number, number] } }[] = []
+                for (const [itemId, group] of d.groups) {
+                    updates.push({
+                        id: itemId,
+                        changes: { position: [group.position.x, group.position.y, group.position.z] }
+                    })
                 }
+
+                if (updates.length > 0) {
+                    state.updateItems(updates, { recordHistory: false })
+                }
+
+                setIsDragging(false)
+                useVenueStore.getState().endHistoryBatch()
+
+                d.initialPositions.clear()
+                d.groups.clear()
+                d.bottomOffsets.clear()
             }}
             onPointerMove={(e) => {
-                if (isDraggingRef.current) {
-                    e.stopPropagation()
-                    const state = useVenueStore.getState()
+                if (!isDraggingRef.current) return
+                e.stopPropagation()
 
-                    // 1. Raycast to Floor Plane (Y=0) to get "Candidate X/Z"
-                    const raycaster = new THREE.Raycaster()
-                    raycaster.setFromCamera(e.pointer, e.camera)
-                    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-                    const intersectPoint = new THREE.Vector3()
-                    raycaster.ray.intersectPlane(plane, intersectPoint)
+                const d = drag.current
+                if (!d.active) return
 
-                    if (intersectPoint) {
-                        // Candidate Position based on drag offset
-                        const rawNewX = intersectPoint.x - dragOffset.current.x
-                        const rawNewZ = intersectPoint.z - dragOffset.current.z
+                const state = useVenueStore.getState()
 
-                        // 2. Snapping (X/Z first so height uses final snapped position)
-                        let finalX = rawNewX
-                        let finalZ = rawNewZ
+                // 1. Raycast to floor plane
+                _raycaster.setFromCamera(e.pointer, e.camera)
+                _plane.normal.set(0, 1, 0)
+                _plane.constant = 0
+                const hit = _raycaster.ray.intersectPlane(_plane, _vec3A)
+                if (!hit) return
 
-                        if (snappingEnabled && snapGrid > 0) {
-                            finalX = Math.round(finalX / snapGrid) * snapGrid
-                            finalZ = Math.round(finalZ / snapGrid) * snapGrid
-                        }
+                const rawNewX = hit.x - d.offsetX
+                const rawNewZ = hit.z - d.offsetZ
 
-                        const downRay = new THREE.Raycaster()
-                        const downDir = new THREE.Vector3(0, -1, 0)
-                        const rayOrigin = new THREE.Vector3()
+                // 2. Snapping
+                let finalX = rawNewX
+                let finalZ = rawNewZ
 
-                        let deltaY = 0
-                        const selectedItems = state.items.filter(i => state.selectedIds.includes(i.id))
+                if (snappingEnabled && snapGrid > 0) {
+                    const snapped = snapToGrid(finalX, finalZ, snapGrid)
+                    finalX = snapped.x
+                    finalZ = snapped.z
+                }
 
-                        if (type === 'trestle-table' && selectedItems.length === 1) {
-                            const longAxis = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), rotation[1]).normalize()
-                            const shortAxis = new THREE.Vector3(-longAxis.z, 0, longAxis.x)
-                            const selfPos = new THREE.Vector3(finalX, 0, finalZ)
-                            let bestSnap: { x: number, z: number, score: number } | null = null
+                let deltaY = 0
+                const selectedItems = state.items.filter(i => state.selectedIds.includes(i.id))
 
-                            state.items.forEach((item) => {
-                                if (item.id === id || item.type !== 'trestle-table') return
+                // Trestle end-to-end snapping
+                if (type === 'trestle-table' && selectedItems.length === 1) {
+                    const otherTrestles = state.items
+                        .filter(item => item.id !== id && item.type === 'trestle-table')
+                    const snap = computeTrestleSnap(
+                        finalX, finalZ, rotation[1],
+                        otherTrestles, trestleSnapConfig,
+                        _vec3B, _vec3C, _vec3D, _yAxis,
+                    )
+                    if (snap) {
+                        finalX = snap.x
+                        finalZ = snap.z
+                    }
+                }
 
-                                const otherAxis = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), item.rotation[1]).normalize()
-                                if (Math.abs(longAxis.dot(otherAxis)) < trestleSnap.angleCos) return
+                // 3. Height calculation
+                const excludeIds = new Set(state.selectedIds)
 
-                                const otherShort = new THREE.Vector3(-otherAxis.z, 0, otherAxis.x)
-                                const delta = new THREE.Vector3(selfPos.x - item.position[0], 0, selfPos.z - item.position[2])
-                                const along = delta.dot(otherAxis)
-                                const across = delta.dot(otherShort)
-                                const alongErr = Math.abs(Math.abs(along) - trestleDims.length)
-                                const acrossErr = Math.abs(across)
+                if (selectedItems.length > 1) {
+                    const anchor = findDragAnchor(selectedItems, d.bottomOffsets)
+                    const anchorInitial = d.initialPositions.get(anchor.id)
+                    if (anchorInitial) {
+                        const anchorCandidateX = anchorInitial[0] + (finalX - d.originX)
+                        const anchorCandidateZ = anchorInitial[2] + (finalZ - d.originZ)
+                        const anchorOffset = d.bottomOffsets.get(anchor.id) ?? 0
 
-                                if (alongErr > trestleSnap.along || acrossErr > trestleSnap.across) return
+                        _vec3B.set(anchorCandidateX, PHYSICS.stackRayOriginY, anchorCandidateZ)
+                        const stackResult = raycastDownForStack(
+                            _vec3B, _downDir, _raycaster2, scene,
+                            excludeIds, anchor.type, state.items,
+                        )
 
-                                const sign = along >= 0 ? 1 : -1
-                                const snapPos = new THREE.Vector3(
-                                    item.position[0] + otherAxis.x * trestleDims.length * sign,
-                                    0,
-                                    item.position[2] + otherAxis.z * trestleDims.length * sign
-                                )
-                                const score = alongErr + acrossErr
-                                if (!bestSnap || score < bestSnap.score) {
-                                    bestSnap = { x: snapPos.x, z: snapPos.z, score }
-                                }
-                            })
+                        const finalAnchorY = stackResult.y + anchorOffset
+                        deltaY = finalAnchorY - anchorInitial[1]
+                    }
+                } else {
+                    ensureObjectBounds()
 
-                            if (bestSnap) {
-                                finalX = bestSnap.x
-                                finalZ = bestSnap.z
-                            }
-                        }
+                    const originY = type === 'chair'
+                        ? (groupRef.current?.position.y ?? position[1]) + objectBounds.current.centerY
+                        : PHYSICS.stackRayOriginY
 
-                        if (selectedItems.length > 1) {
-                            const anchor = selectedItems.reduce((lowest, item) => {
-                                const lowestOffset = selectionBottomOffsets.current[lowest.id] ?? 0
-                                const itemOffset = selectionBottomOffsets.current[item.id] ?? 0
-                                const lowestBottom = lowest.position[1] - lowestOffset
-                                const itemBottom = item.position[1] - itemOffset
-                                if (itemBottom === lowestBottom && item.type === 'platform') return item
-                                return itemBottom < lowestBottom ? item : lowest
-                            }, selectedItems[0])
+                    _vec3B.set(finalX, originY, finalZ)
+                    excludeIds.add(id)
+                    const stackResult = raycastDownForStack(
+                        _vec3B, _downDir, _raycaster2, scene,
+                        excludeIds, type, state.items,
+                    )
 
-                            const anchorCandidateX = anchor.position[0] + (finalX - position[0])
-                            const anchorCandidateZ = anchor.position[2] + (finalZ - position[2])
-                            const anchorOffset = selectionBottomOffsets.current[anchor.id] ?? 0
-
-                            rayOrigin.set(anchorCandidateX, stackRayOriginY, anchorCandidateZ)
-                            downRay.set(rayOrigin, downDir)
-
-                            let targetY = 0
-                            const downIntersects = downRay.intersectObjects(scene.children, true)
-                            for (const hit of downIntersects) {
-                                let current: THREE.Object3D | null = hit.object
-                                let rootGroup: THREE.Object3D | null = null
-
-                                while (current) {
-                                    if (current.userData && current.userData.id) {
-                                        rootGroup = current
-                                        break
-                                    }
-                                    current = current.parent
-                                }
-
-                                if (!rootGroup || !rootGroup.userData.id) continue
-                                if (state.selectedIds.includes(rootGroup.userData.id)) continue
-
-                                const hitItem = state.items.find(i => i.id === rootGroup!.userData.id)
-                                if (!hitItem) continue
-
-                                if (anchor.type === 'platform' && hitItem.type !== 'platform') continue
-                                if (anchor.type !== 'platform' && hitItem.type !== 'platform') continue
-
-                                targetY = hit.point.y
-                                break
-                            }
-
-                            const finalAnchorY = targetY + anchorOffset
-                            deltaY = finalAnchorY - anchor.position[1]
-                        } else {
-                            // 3. Logic: Height Calculation via Downward Raycast (Lego Physics)
-                            let targetY = 0
-                            ensureObjectBounds()
-
-                            const originY = type === 'chair'
-                                ? (groupRef.current?.position.y ?? position[1]) + objectBounds.current.centerY
-                                : stackRayOriginY
-
-                            rayOrigin.set(finalX, originY, finalZ)
-                            downRay.set(rayOrigin, downDir)
-
-                        const downIntersects = downRay.intersectObjects(scene.children, true)
-                        let platformRoot: THREE.Object3D | null = null
-
-                        for (const hit of downIntersects) {
-                            // Ignore self or selection
-                            let current: THREE.Object3D | null = hit.object
-                            let rootGroup: THREE.Object3D | null = null
-
-                                while (current) {
-                                    if (current.userData && current.userData.id) {
-                                        rootGroup = current
-                                        break
-                                    }
-                                    current = current.parent
-                                }
-
-                                if (!rootGroup || !rootGroup.userData.id) continue
-                                if (rootGroup === groupRef.current) continue
-                                if (state.selectedIds.includes(rootGroup.userData.id)) continue
-
-                                const hitItem = state.items.find(i => i.id === rootGroup!.userData.id)
-                                if (!hitItem) continue
-
-                            if (type === 'platform' && hitItem.type !== 'platform') continue
-                            if (type !== 'platform' && hitItem.type !== 'platform') continue
-
-                            targetY = hit.point.y
-                            if (hitItem.type === 'platform') {
-                                platformRoot = rootGroup
-                            }
-                            break // Closest valid surface for this ray
-                        }
-
-                        // 4. Apply offset
-                        let finalY = targetY
-                        if (type === 'chair' || type === 'platform') {
-                            finalY += objectBounds.current.bottomOffset
-                        }
-
-                        if (type === 'trestle-table' && platformRoot && groupRef.current) {
-                            const platformBox = getLocalBounds(platformRoot)
-                            if (!platformBox.isEmpty()) {
-                                const platformQuat = new THREE.Quaternion()
-                                const trestleQuat = new THREE.Quaternion()
-                                platformRoot.getWorldQuaternion(platformQuat)
-                                groupRef.current.getWorldQuaternion(trestleQuat)
-
-                                const relQuat = platformQuat.clone().invert().multiply(trestleQuat)
-                                const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(relQuat)
-                                const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(relQuat)
-
-                                const halfLen = trestleDims.length / 2
-                                const halfDepth = trestleDims.depth / 2
-                                const halfX = Math.abs(axisX.x) * halfLen + Math.abs(axisZ.x) * halfDepth
-                                const halfZ = Math.abs(axisX.z) * halfLen + Math.abs(axisZ.z) * halfDepth
-
-                                const localPos = platformRoot.worldToLocal(new THREE.Vector3(finalX, finalY, finalZ))
-                                const minX = platformBox.min.x + halfX
-                                const maxX = platformBox.max.x - halfX
-                                const minZ = platformBox.min.z + halfZ
-                                const maxZ = platformBox.max.z - halfZ
-
-                                if (minX <= maxX) localPos.x = THREE.MathUtils.clamp(localPos.x, minX, maxX)
-                                else localPos.x = (platformBox.min.x + platformBox.max.x) / 2
-
-                                if (minZ <= maxZ) localPos.z = THREE.MathUtils.clamp(localPos.z, minZ, maxZ)
-                                else localPos.z = (platformBox.min.z + platformBox.max.z) / 2
-
-                                const clampedWorld = platformRoot.localToWorld(localPos)
-                                finalX = clampedWorld.x
-                                finalZ = clampedWorld.z
-                            }
-                        }
-
-                        deltaY = finalY - position[1]
+                    let finalY = stackResult.y
+                    if (type === 'chair' || type === 'platform') {
+                        finalY += objectBounds.current.bottomOffset
                     }
 
-                        // 5. Update Store
-                        const deltaX = finalX - position[0]
-                        const deltaZ = finalZ - position[2]
-
-                        if (Math.abs(deltaX) < 0.001 && Math.abs(deltaZ) < 0.001 && Math.abs(deltaY) < 0.001) return
-
-                        const movingTrestles = selectedItems.filter(item => item.type === 'trestle-table')
-                        if (movingTrestles.length > 0) {
-                            const others = state.items.filter(item => item.type === 'trestle-table' && !state.selectedIds.includes(item.id))
-                            const deltaVec = new THREE.Vector3(deltaX, deltaY, deltaZ)
-
-                            for (const moving of movingTrestles) {
-                                const movingObj = scene.getObjectByProperty('userData.id', moving.id)
-                                if (!movingObj) continue
-                                const movingBox = new THREE.Box3().setFromObject(movingObj).translate(deltaVec)
-
-                                for (const other of others) {
-                                    const otherObj = scene.getObjectByProperty('userData.id', other.id)
-                                    if (!otherObj) continue
-                                    const otherBox = new THREE.Box3().setFromObject(otherObj)
-
-                                    if (boxesOverlap(movingBox, otherBox)) return
-                                }
-                            }
+                    // Platform clamping for trestle tables
+                    if (type === 'trestle-table' && stackResult.platformRoot && groupRef.current) {
+                        const platformBox = getLocalBounds(stackResult.platformRoot)
+                        const clamped = clampToPlatformBounds(
+                            finalX, finalY, finalZ,
+                            stackResult.platformRoot, groupRef.current, platformBox,
+                            trestleSnapConfig.length, trestleSnapConfig.depth,
+                            _quatA, _quatB, _vec3C, _vec3D, _vec3E,
+                        )
+                        if (clamped) {
+                            finalX = clamped.x
+                            finalZ = clamped.z
                         }
-
-                        const updates = selectedItems.map(item => {
-                            // Maintain relative Y structure? 
-                            // Or Flatten? "Stacking" implies flattening onto the target.
-                            // If we move a group of chairs, we want them to Land on the platform.
-                            // If they were at same height, they land at same height.
-                            // If we move a stack of platforms, the base lands on target, upper ones follow.
-
-                            // For complex multi-select, calculating "Base Y" of selection is hard.
-                            // Simplified: Apply deltaY to all.
-                            // This means if I pick up a Chair (Y=0) and Table (Y=0) and move to Platform (Target=0.2),
-                            // DeltaY = 0.2. Both move to 0.2. Correct.
-
-                            // What if I pick a Stack (P1=0, P2=0.2) and move to Floor?
-                            // Lead item P1 (Target=0). DeltaY = 0.
-                            // P2 stays at 0.2 relative? Wait.
-                            // If P1 moves 0->0, P2 moves 0.2->0.2. Correct.
-
-                            return {
-                                id: item.id,
-                                changes: {
-                                    position: [
-                                        item.position[0] + deltaX,
-                                        item.position[1] + deltaY,
-                                        item.position[2] + deltaZ
-                                    ] as [number, number, number]
-                                }
-                            }
-                        })
-
-                        state.updateItems(updates)
                     }
+
+                    deltaY = finalY - position[1]
+                }
+
+                // 4. Compute deltas from origin
+                const deltaX = finalX - d.originX
+                const deltaZ = finalZ - d.originZ
+
+                if (Math.abs(deltaX) < PHYSICS.movementThreshold && Math.abs(deltaZ) < PHYSICS.movementThreshold && Math.abs(deltaY) < PHYSICS.movementThreshold) return
+
+                // 5. Collision detection for trestle tables
+                const movingTrestles = selectedItems.filter(item => item.type === 'trestle-table')
+                if (movingTrestles.length > 0) {
+                    const others = state.items.filter(item => item.type === 'trestle-table' && !state.selectedIds.includes(item.id))
+
+                    for (const moving of movingTrestles) {
+                        const movingGroup = d.groups.get(moving.id)
+                        if (!movingGroup) continue
+                        const initPos = d.initialPositions.get(moving.id)
+                        if (!initPos) continue
+                        _box3A.setFromObject(movingGroup)
+                        const visualDelta = _vec3C.set(
+                            initPos[0] + deltaX - movingGroup.position.x,
+                            initPos[1] + deltaY - movingGroup.position.y,
+                            initPos[2] + deltaZ - movingGroup.position.z
+                        )
+                        _box3A.translate(visualDelta)
+
+                        for (const other of others) {
+                            const otherGroup = findGroupById(scene, other.id)
+                            if (!otherGroup) continue
+                            _box3B.setFromObject(otherGroup)
+
+                            if (boxesOverlap(_box3A, _box3B, PHYSICS.collisionEpsilon)) return
+                        }
+                    }
+                }
+
+                // 6. DIRECTLY MOVE Three.js groups (NO store update!)
+                for (const [itemId, group] of d.groups) {
+                    const initPos = d.initialPositions.get(itemId)
+                    if (!initPos) continue
+                    group.position.set(
+                        initPos[0] + deltaX,
+                        initPos[1] + deltaY,
+                        initPos[2] + deltaZ
+                    )
                 }
             }}
             userData={{ id }}
         >
             <Component />
 
-            {/* Visual Feedback for Selection */}
-            {isSelected && selectionBounds && (
-                <group position={[selectionBounds.center.x, selectionBounds.center.y, selectionBounds.center.z]} userData={{ skipBounds: true }}>
-                    <mesh raycast={() => null}>
-                        <boxGeometry args={[
-                            selectionBounds.size.x * 1.03,
-                            selectionBounds.size.y * 1.03,
-                            selectionBounds.size.z * 1.03
-                        ]} />
+            {isSelected && selectionBounds && selectionHighlightGeom && (
+                <group position={selectionBounds.center} userData={{ skipBounds: true }}>
+                    <mesh raycast={() => null} geometry={selectionHighlightGeom.box}>
                         <meshStandardMaterial
                             color="#8b7bff"
                             emissive="#8b7bff"
@@ -484,15 +377,11 @@ export const InteractiveFurniture = ({ id, groupId, type, position, rotation, on
                         />
                     </mesh>
                     <lineSegments raycast={() => null}>
-                        <edgesGeometry args={[new THREE.BoxGeometry(
-                            selectionBounds.size.x * 1.05,
-                            selectionBounds.size.y * 1.05,
-                            selectionBounds.size.z * 1.05
-                        )]} />
+                        <edgesGeometry args={[selectionHighlightGeom.edges]} />
                         <lineBasicMaterial color="#b7abff" transparent opacity={0.95} />
                     </lineSegments>
                 </group>
             )}
         </group>
     )
-}
+})

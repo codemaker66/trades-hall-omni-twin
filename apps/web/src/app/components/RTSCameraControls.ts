@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { CAMERA } from '../../config/scene'
 
 type Bounds = {
   minX: number;
@@ -18,6 +19,9 @@ type RTSCameraOptions = {
   maxDistance?: number;
   minPitch?: number;
   maxPitch?: number;
+  /** Edge-pan margin as fraction of viewport dimension (0.03 = 3%) */
+  edgeMarginFraction?: number;
+  /** @deprecated Use edgeMarginFraction instead */
   edgeMarginPx?: number;
   panSpeed?: number;
   zoomSpeed?: number;
@@ -41,34 +45,32 @@ type KeyState = {
   right: boolean;
 };
 
-const PAN_ACCEL = 20;
-const PAN_FRICTION = 16;
-const PAN_ZOOM_MIN = 0.7;
-const PAN_ZOOM_MAX = 1.6;
-const ZOOM_FRICTION = 14;
-const ROTATE_DAMPING = 12;
-const ROTATE_DRAG_SPEED = 0.005;
-const PITCH_DAMPING = 8;
-const FOCUS_DAMPING = 6;
+// Scratch vectors — reused every frame to avoid GC
+const _inputVec = new THREE.Vector3();
+const _forward = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _desired = new THREE.Vector3();
+
+const { panAccel: PAN_ACCEL, panFriction: PAN_FRICTION, panZoomScaleMin: PAN_ZOOM_MIN, panZoomScaleMax: PAN_ZOOM_MAX, zoomFriction: ZOOM_FRICTION, rotateDamping: ROTATE_DAMPING, rotateDragSpeed: ROTATE_DRAG_SPEED, pitchDamping: PITCH_DAMPING, focusDamping: FOCUS_DAMPING } = CAMERA.damping;
 
 export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHandle {
   const { camera, domElement, bounds } = options;
   const target = options.target ? options.target.clone() : new THREE.Vector3(0, 0, 0);
 
-  let yaw = options.yaw ?? THREE.MathUtils.degToRad(40);
+  let yaw = options.yaw ?? THREE.MathUtils.degToRad(CAMERA.rts.defaultYaw);
   let targetYaw = yaw;
-  let distance = options.distance ?? 18;
-  const minDistance = options.minDistance ?? 6;
-  const maxDistance = options.maxDistance ?? 32;
-  const minPitch = options.minPitch ?? THREE.MathUtils.degToRad(32);
-  const maxPitch = options.maxPitch ?? THREE.MathUtils.degToRad(65);
+  let distance = options.distance ?? CAMERA.rts.defaultDistance;
+  const minDistance = options.minDistance ?? CAMERA.rts.minDistance;
+  const maxDistance = options.maxDistance ?? CAMERA.rts.maxDistance;
+  const minPitch = options.minPitch ?? THREE.MathUtils.degToRad(CAMERA.rts.minPitch);
+  const maxPitch = options.maxPitch ?? THREE.MathUtils.degToRad(CAMERA.rts.maxPitch);
   const initialZoomT = THREE.MathUtils.clamp((distance - minDistance) / (maxDistance - minDistance), 0, 1);
   let pitch = THREE.MathUtils.lerp(minPitch, maxPitch, initialZoomT);
-  const edgeMargin = options.edgeMarginPx ?? 28;
-  const padding = options.padding ?? 0.6;
+  const edgeMarginFraction = options.edgeMarginFraction ?? CAMERA.rts.edgeMarginFraction;
+  const padding = options.padding ?? CAMERA.rts.boundaryPadding;
 
-  let panSpeed = options.panSpeed ?? 6;
-  const zoomSpeed = options.zoomSpeed ?? 10;
+  let panSpeed = options.panSpeed ?? CAMERA.rts.panSpeed;
+  const zoomSpeed = options.zoomSpeed ?? CAMERA.rts.zoomSpeed;
   let enableRotate = options.enableRotate ?? false;
   let panInputsEnabled = true;
 
@@ -109,25 +111,28 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   };
 
   const edgeStrength = (value: number, max: number) => {
-    if (value < edgeMargin) {
-      const t = (edgeMargin - value) / edgeMargin;
+    const margin = max * edgeMarginFraction;
+    if (margin <= 0) return 0;
+    if (value < margin) {
+      const t = (margin - value) / margin;
       return -t * t;
     }
-    if (value > max - edgeMargin) {
-      const t = (value - (max - edgeMargin)) / edgeMargin;
+    if (value > max - margin) {
+      const t = (value - (max - margin)) / margin;
       return t * t;
     }
     return 0;
   };
 
+  const _ndc = new THREE.Vector2();
+  const _planeHit = new THREE.Vector3();
+
   const getPlaneIntersection = (event: PointerEvent) => {
     const rect = domElement.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     const y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
-    raycaster.setFromCamera({ x, y }, camera);
-    const hit = new THREE.Vector3();
-    const ok = raycaster.ray.intersectPlane(floorPlane, hit);
-    return ok ? hit : null;
+    raycaster.setFromCamera(_ndc.set(x, y), camera);
+    return raycaster.ray.intersectPlane(floorPlane, _planeHit) ? _planeHit.clone() : null;
   };
 
   const onPointerEnter = () => {
@@ -209,8 +214,8 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
 
   const onWheel = (event: WheelEvent) => {
     event.preventDefault();
-    zoomVelocity += event.deltaY * 0.0015 * zoomSpeed;
-    zoomVelocity = THREE.MathUtils.clamp(zoomVelocity, -12, 12);
+    zoomVelocity += event.deltaY * CAMERA.zoom.wheelSensitivity * zoomSpeed;
+    zoomVelocity = THREE.MathUtils.clamp(zoomVelocity, -CAMERA.zoom.maxVelocity, CAMERA.zoom.maxVelocity);
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -300,12 +305,12 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
   };
 
   const update = (delta: number) => {
-    const dt = Math.min(Math.max(delta, 0), 0.1);
+    const dt = Math.min(Math.max(delta, 0), CAMERA.maxDeltaTime);
 
     if (focusTarget) {
       const t = 1 - Math.exp(-FOCUS_DAMPING * dt);
       target.lerp(focusTarget, t);
-      if (target.distanceToSquared(focusTarget) < 0.0004) {
+      if (target.distanceToSquared(focusTarget) < CAMERA.focusArrivalThreshold) {
         focusTarget = null;
       }
       clampTarget();
@@ -332,21 +337,21 @@ export function createRTSCameraControls(options: RTSCameraOptions): RTSCameraHan
       inputZ += (keyState.backward ? 1 : 0) - (keyState.forward ? 1 : 0);
     }
 
-    const inputVec = new THREE.Vector3(inputX, 0, inputZ);
-    if (inputVec.lengthSq() > 1) {
-      inputVec.normalize();
+    _inputVec.set(inputX, 0, inputZ);
+    if (_inputVec.lengthSq() > 1) {
+      _inputVec.normalize();
     }
 
-    if (inputVec.lengthSq() > 0) {
-      const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-      const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-      const desired = new THREE.Vector3();
-      desired.addScaledVector(right, inputVec.x);
-      desired.addScaledVector(forward, -inputVec.z);
-      desired.multiplyScalar(panSpeed * speedScale);
+    if (_inputVec.lengthSq() > 0) {
+      _forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+      _right.set(Math.cos(yaw), 0, -Math.sin(yaw));
+      _desired.set(0, 0, 0);
+      _desired.addScaledVector(_right, _inputVec.x);
+      _desired.addScaledVector(_forward, -_inputVec.z);
+      _desired.multiplyScalar(panSpeed * speedScale);
 
-      panVelocity.x = THREE.MathUtils.damp(panVelocity.x, desired.x, PAN_ACCEL, dt);
-      panVelocity.z = THREE.MathUtils.damp(panVelocity.z, desired.z, PAN_ACCEL, dt);
+      panVelocity.x = THREE.MathUtils.damp(panVelocity.x, _desired.x, PAN_ACCEL, dt);
+      panVelocity.z = THREE.MathUtils.damp(panVelocity.z, _desired.z, PAN_ACCEL, dt);
       focusTarget = null;
     } else {
       panVelocity.x = THREE.MathUtils.damp(panVelocity.x, 0, PAN_FRICTION, dt);

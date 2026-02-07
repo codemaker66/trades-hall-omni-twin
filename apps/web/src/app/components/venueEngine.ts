@@ -205,8 +205,8 @@ function shapeOverlap(a: Shape2D, b: Shape2D): boolean {
     return rectRectOverlap(a, b);
   }
 
-  const rect = a.kind === "rect" ? a : b;
-  const circle = a.kind === "circle" ? a : b;
+  const rect = (a.kind === "rect" ? a : b) as RectShape;
+  const circle = (a.kind === "circle" ? a : b) as CircleShape;
   return rectCircleOverlap(rect, circle);
 }
 
@@ -337,7 +337,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     maxDistance: 36,
     minPitch: THREE.MathUtils.degToRad(32),
     maxPitch: THREE.MathUtils.degToRad(68),
-    edgeMarginPx: 38,
+    edgeMarginFraction: 0.04,
     zoomSpeed: 9,
     enableRotate: true,
     padding: 0.8
@@ -420,8 +420,8 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
   function snapshotsEqual(a: SceneSnapshot, b: SceneSnapshot) {
     if (a.items.length !== b.items.length) return false;
     for (let i = 0; i < a.items.length; i += 1) {
-      const ai = a.items[i];
-      const bi = b.items[i];
+      const ai = a.items[i]!;
+      const bi = b.items[i]!;
       if (ai.id !== bi.id || ai.type !== bi.type || ai.rotationY !== bi.rotationY) return false;
       if (ai.position.x !== bi.position.x || ai.position.y !== bi.position.y || ai.position.z !== bi.position.z) return false;
     }
@@ -473,7 +473,9 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     if (dragging.active) endDrag(false);
     if (historyIndex <= 0) return;
     historyIndex -= 1;
-    applySnapshot(history[historyIndex]);
+    const snapshot = history[historyIndex];
+    if (!snapshot) return;
+    applySnapshot(snapshot);
     notifyHistory();
   }
 
@@ -481,7 +483,9 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     if (dragging.active) endDrag(false);
     if (historyIndex >= history.length - 1) return;
     historyIndex += 1;
-    applySnapshot(history[historyIndex]);
+    const snapshot = history[historyIndex];
+    if (!snapshot) return;
+    applySnapshot(snapshot);
     notifyHistory();
   }
 
@@ -957,7 +961,7 @@ export function createVenueEngine(options: EngineOptions): EngineApi {
     renderer.domElement.style.cursor = meta ? "pointer" : "default";
   }
 
-  function handlePointerUp(ev: PointerEvent) {
+  function handlePointerUp() {
     if (mode !== "edit") return;
     if (!dragging.active) return;
     if (dragging.placing) return;

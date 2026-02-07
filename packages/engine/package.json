@@ -1,0 +1,23 @@
+{
+  "name": "@omni-twin/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@omni-twin/types": "*",
+    "bitecs": "^0.3.40"
+  },
+  "devDependencies": {
+    "fast-check": "^4.5.3",
+    "typescript": "^5.5.4",
+    "vitest": "^4.0.18"
+  }
+}

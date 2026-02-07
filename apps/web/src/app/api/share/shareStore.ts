@@ -434,7 +434,7 @@ class RedisShareSnapshotStore implements ShareSnapshotStore {
       const oldest = await client.zRange(this.createdIndexKey, 0, 0)
       if (oldest.length === 0) return
 
-      const oldestKey = oldest[0]
+      const oldestKey = oldest[0]!
       await client.multi()
         .del(oldestKey)
         .zRem(this.createdIndexKey, oldestKey)

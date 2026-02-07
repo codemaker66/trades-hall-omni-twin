@@ -2,13 +2,40 @@
   "name": "omni-twin",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "packageManager": "npm@11.6.0",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm --workspace apps/web run dev",
-    "build": "npm --workspace apps/web run build",
-    "lint": "npm --workspace apps/web run lint"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test"
+  },
+  "dependencies": {
+    "@react-spring/three": "^10.0.3",
+    "@react-spring/web": "^10.0.3",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "@react-three/postprocessing": "^3.0.4",
+    "framer-motion": "^12.24.12",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "three": "^0.164.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
+    "turbo": "^2.8.3",
+    "typescript": "^5.5.4",
+    "vite": "^7.3.1"
   }
 }

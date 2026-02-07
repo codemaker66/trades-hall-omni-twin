@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run -w apps/web lint
+
+      - name: Type Check
+        run: npx -w apps/web tsc --noEmit
+
+      - name: Test
+        run: npm run -w apps/web test
+
+      - name: Build
+        run: npm run -w apps/web build
+
+      - name: Audit
+        run: npm audit --audit-level=moderate
+        continue-on-error: true

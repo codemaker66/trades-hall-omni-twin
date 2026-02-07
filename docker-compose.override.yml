@@ -1,0 +1,24 @@
+# Development overrides — hot-reload with source volumes.
+# Active by default when running `docker compose up`.
+services:
+  web:
+    build:
+      target: deps
+    command: npm run dev --workspace=apps/web
+    volumes:
+      - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/public:/app/apps/web/public
+      - ./packages:/app/packages
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-4000}
+
+  server:
+    build:
+      target: deps
+    command: npm run dev --workspace=apps/server
+    volumes:
+      - ./apps/server/src:/app/apps/server/src
+      - ./packages:/app/packages
+    environment:
+      - NODE_ENV=development

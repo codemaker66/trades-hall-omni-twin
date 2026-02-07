@@ -50,6 +50,11 @@ const createUniqueSnapshotCode = async (snapshot: ShareSnapshot): Promise<string
 }
 
 export async function POST(request: NextRequest) {
+  const contentType = request.headers.get('content-type')
+  if (!contentType || !contentType.includes('application/json')) {
+    return jsonNoStore({ error: 'Content-Type must be application/json.' }, { status: 415 })
+  }
+
   await shareSnapshotStore.purgeExpired(nowMs())
 
   let body: unknown
