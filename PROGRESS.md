@@ -272,21 +272,24 @@
 ## Phase 6: Polish, Accessibility & Production Readiness
 
 ### 6.1 Accessibility
-- [ ] All interactive elements keyboard-accessible
-- [ ] Tab through furniture, arrow keys to nudge
+- [x] Keyboard navigation (useEditorKeyboard hook — Tab cycle, arrow nudge, Del, R, Ctrl+Z/A, Escape)
+- [x] Tab through furniture items, arrow keys to nudge, Shift for 5x speed
 - [ ] Accessible table/list view for 3D objects
-- [ ] WCAG 2.2 AA color contrast
-- [ ] aria-label, aria-live regions
+- [ ] WCAG 2.2 AA color contrast audit
+- [x] aria-live regions (metrics bar, capacity warning role=alert)
 - [ ] Numeric input fields as drag alternative (WCAG 2.5.7)
-- [ ] Screen reader announcements
+- [x] Screen reader announcements (ScreenReaderProvider + useAnnounce hook)
 - [ ] Color-blind safe palette (Okabe-Ito)
-- [ ] `prefers-reduced-motion` support
+- [x] `prefers-reduced-motion` support (CSS global — disables all animations/transitions)
 - [ ] High contrast mode
+- [x] eslint-plugin-jsx-a11y recommended rules enabled
+- [x] Focus-visible ring (indigo-50, 2px offset)
+- [x] Skip-to-content link styles
 
 ### 6.2 Performance Audit
 - [ ] Lighthouse > 90 on all pages
 - [ ] LCP < 2.5s, FID < 100ms, CLS < 0.1
-- [ ] Bundle analysis and code-splitting
+- [x] Code-splitting (3D view lazy-loaded via next/dynamic)
 - [ ] Image optimization (WebP/AVIF)
 - [ ] Database query optimization (indexes, slow queries)
 - [ ] API caching
@@ -294,7 +297,7 @@
 ### 6.3 Error Handling & Edge Cases
 - [x] Global error boundary
 - [x] Toast notifications (save success/failure)
-- [ ] Auto-save with visual indicator
+- [x] Auto-save with visual indicator (debounced localStorage, saving/saved/error dot)
 - [ ] Session expiry handling
 - [ ] Rate limit error handling
 - [ ] Large floor plan handling (> 500 objects)
@@ -309,10 +312,10 @@
 ### 6.5 Security Audit
 - [ ] Input sanitization
 - [ ] File upload validation (server-side)
-- [ ] SQL injection prevention (Drizzle handles)
-- [ ] XSS prevention
+- [x] SQL injection prevention (Drizzle ORM handles parameterization)
+- [x] XSS prevention (React auto-escaping, no dangerouslySetInnerHTML)
 - [ ] CSRF protection
-- [ ] Secure headers (CSP, HSTS)
+- [x] Secure headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Permissions-Policy)
 - [ ] Shareable link token security
 
 ### 6.6 DevOps & Deployment
@@ -325,7 +328,13 @@
 - [ ] Structured logging (JSON, request IDs)
 - [ ] Error monitoring (Sentry)
 
-### 6.7 Documentation
+### 6.7 Tests for Phase 6
+- [x] Keyboard navigation tests (Tab cycle, nudge, Shift speed, locked skip, delete, rotate, select all, escape, undo/redo — 18 tests)
+- [x] Auto-save tests (localStorage save/load, no-overwrite, corrupt data, clear — 5 tests)
+- [x] Security header validation tests (CSP, HSTS max-age — 2 tests)
+- [x] 25 tests total
+
+### 6.8 Documentation
 - [ ] README.md (setup, architecture, env vars)
 - [ ] API documentation (from Zod/OpenAPI)
 - [ ] CONTRIBUTING.md
@@ -342,3 +351,4 @@
 | 2026-02-06 | Phase 3 | 2D floor plan editor (Konva canvas, grid snap, 10 furniture types, multi-select, drag, undo/redo, 7 templates, spacing checker, capacity warnings, PNG export, legend), 39 tests |
 | 2026-02-06 | Phase 4 | 2D/3D toggle view, coordinate bridge (feet↔meters), 3D preview with InstancedMesh, camera presets with animated transitions, lazy-loaded Three.js, 26 tests |
 | 2026-02-06 | Phase 5 | Yjs collaboration infrastructure (Y.Doc model, bidirectional Yjs↔Zustand bridge with echo suppression, presence/awareness system, y-websocket provider, y-indexeddb offline persistence, ConnectionStatusIndicator UI), 30 tests |
+| 2026-02-07 | Phase 6 | Accessibility (prefers-reduced-motion, eslint-plugin-jsx-a11y, keyboard nav hook, ARIA live regions, screen reader announcements), auto-save with indicator, security headers (CSP/HSTS/XSS), Modal useId fix, 25 tests |
