@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import type { AuthUser } from '@omni-twin/types'
+import { apiFetch } from '../../lib/api-client'
 
 export interface AuthContextValue {
   user: AuthUser | null
@@ -9,23 +10,6 @@ export interface AuthContextValue {
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
   register: (email: string, name: string, password: string) => Promise<{ ok: boolean; error?: string }>
   logout: () => Promise<void>
-}
-
-const API_BASE = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:4000'
-
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<{ ok: boolean; data?: T; error?: string }> {
-  try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      ...init,
-    })
-    const data = await res.json() as T & { error?: string }
-    if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}` }
-    return { ok: true, data }
-  } catch {
-    return { ok: false, error: 'Network error. Please try again.' }
-  }
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)

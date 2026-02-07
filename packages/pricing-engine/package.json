@@ -1,0 +1,21 @@
+{
+  "name": "@omni-twin/pricing-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --no-isolate"
+  },
+  "dependencies": {
+    "@omni-twin/types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vitest": "^4.0.18"
+  }
+}

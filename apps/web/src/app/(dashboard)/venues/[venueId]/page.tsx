@@ -1,29 +1,17 @@
 'use client'
 
-import { use } from 'react'
-import { useState } from 'react'
+import { use, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Card } from '../../../components/ui/Card'
 import { Badge } from '../../../components/ui/Badge'
 import { Button } from '../../../components/ui/Button'
 import { Input } from '../../../components/ui/Input'
 import { Select } from '../../../components/ui/Select'
-
-// Placeholder data — will be replaced with API fetch
-const mockVenueData = {
-  id: '1',
-  name: 'Trades Hall',
-  slug: 'trades-hall',
-  description: 'A magnificent heritage-listed building in the heart of Melbourne, perfect for grand events and conferences.',
-  venueType: 'ballroom',
-  capacity: 500,
-  squareFootage: 8500,
-  address: '54 Victoria St, Melbourne VIC 3000',
-  pricingModel: 'hourly' as const,
-  basePrice: 250,
-  status: 'published' as const,
-  amenities: ['WiFi', 'Stage', 'AV Equipment', 'Catering Kitchen', 'Parking'],
-}
+import { Skeleton } from '../../../components/ui/Skeleton'
+import { ErrorAlert } from '../../../components/ui/ErrorAlert'
+import { useVenue } from '../../../hooks/useVenues'
+import { apiFetch } from '../../../../lib/api-client'
+import { toast } from '../../../components/ui/Toast'
 
 const venueTypes = [
   { value: 'ballroom', label: 'Ballroom' },
@@ -56,18 +44,95 @@ const statusBadge: Record<string, 'success' | 'gold' | 'default'> = {
 
 export default function VenueDetailPage({ params }: { params: Promise<{ venueId: string }> }) {
   const { venueId } = use(params)
-  const venue = mockVenueData // In production: fetch by venueId
+  const { venue, loading, error, refetch } = useVenue(venueId)
 
-  const [name, setName] = useState(venue.name)
-  const [slug, setSlug] = useState(venue.slug)
-  const [description, setDescription] = useState(venue.description)
-  const [venueType, setVenueType] = useState(venue.venueType)
-  const [capacity, setCapacity] = useState(String(venue.capacity))
-  const [squareFootage, setSquareFootage] = useState(String(venue.squareFootage))
-  const [address, setAddress] = useState(venue.address)
-  const [pricingModel, setPricingModel] = useState(venue.pricingModel)
-  const [basePrice, setBasePrice] = useState(String(venue.basePrice))
-  const [status, setStatus] = useState(venue.status)
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [description, setDescription] = useState('')
+  const [venueType, setVenueType] = useState('')
+  const [capacity, setCapacity] = useState('')
+  const [squareFootage, setSquareFootage] = useState('')
+  const [address, setAddress] = useState('')
+  const [pricingModel, setPricingModel] = useState('')
+  const [basePrice, setBasePrice] = useState('')
+  const [status, setStatus] = useState<'draft' | 'published' | 'archived'>('draft')
+  const [saving, setSaving] = useState(false)
+
+  // Populate form when venue data arrives
+  useEffect(() => {
+    if (venue) {
+      setName(venue.name)
+      setSlug(venue.slug)
+      setDescription(venue.description ?? '')
+      setVenueType(venue.venueType ?? '')
+      setCapacity(venue.capacity != null ? String(venue.capacity) : '')
+      setSquareFootage(venue.squareFootage != null ? String(venue.squareFootage) : '')
+      setAddress(venue.address ?? '')
+      setPricingModel(venue.pricingModel ?? '')
+      setBasePrice(venue.basePrice != null ? String(venue.basePrice) : '')
+      setStatus(venue.status)
+    }
+  }, [venue])
+
+  async function handleSave() {
+    setSaving(true)
+    const res = await apiFetch(`/venues/${venueId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name,
+        slug,
+        description: description || null,
+        venueType: venueType || null,
+        capacity: capacity ? Number(capacity) : null,
+        squareFootage: squareFootage ? Number(squareFootage) : null,
+        address: address || null,
+        pricingModel: pricingModel || null,
+        basePrice: basePrice ? Number(basePrice) : null,
+        status,
+      }),
+    })
+    setSaving(false)
+
+    if (res.ok) {
+      toast.success('Venue saved successfully.')
+      refetch()
+    } else {
+      toast.error(res.error ?? 'Failed to save venue.')
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6 max-w-4xl">
+        <Skeleton width="w-48" height="h-6" />
+        <div className="bg-surface-10 border border-surface-25 rounded-xl p-5 space-y-4">
+          <Skeleton width="w-1/3" height="h-5" />
+          <div className="grid grid-cols-2 gap-4">
+            <Skeleton height="h-10" />
+            <Skeleton height="h-10" />
+          </div>
+          <Skeleton height="h-20" />
+        </div>
+        <div className="bg-surface-10 border border-surface-25 rounded-xl p-5 space-y-4">
+          <Skeleton width="w-1/4" height="h-5" />
+          <div className="grid grid-cols-2 gap-4">
+            <Skeleton height="h-10" />
+            <Skeleton height="h-10" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-4xl">
+        <ErrorAlert message={error} onRetry={refetch} />
+      </div>
+    )
+  }
+
+  if (!venue) return null
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -85,7 +150,9 @@ export default function VenueDetailPage({ params }: { params: Promise<{ venueId:
           <Link href={`/editor`}>
             <Button variant="ghost" size="sm">Open in Editor</Button>
           </Link>
-          <Button variant="primary" size="sm">Save Changes</Button>
+          <Button variant="primary" size="sm" onClick={handleSave} loading={saving}>
+            Save Changes
+          </Button>
         </div>
       </div>
 
@@ -159,7 +226,7 @@ export default function VenueDetailPage({ params }: { params: Promise<{ venueId:
             label="Pricing Model"
             options={pricingModels}
             value={pricingModel}
-            onChange={(e) => setPricingModel(e.target.value as typeof pricingModel)}
+            onChange={(e) => setPricingModel(e.target.value)}
           />
           <Input
             label="Base Price ($)"
@@ -173,9 +240,12 @@ export default function VenueDetailPage({ params }: { params: Promise<{ venueId:
       {/* Amenities */}
       <Card header="Amenities">
         <div className="flex flex-wrap gap-2">
-          {venue.amenities.map((amenity) => (
+          {(venue.amenities ?? []).map((amenity) => (
             <Badge key={amenity} variant="gold">{amenity}</Badge>
           ))}
+          {(venue.amenities ?? []).length === 0 && (
+            <p className="text-xs text-surface-60">No amenities configured.</p>
+          )}
         </div>
         <p className="text-xs text-surface-60 mt-3">Amenity editing will be available in a future update.</p>
       </Card>

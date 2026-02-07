@@ -1,13 +1,11 @@
+'use client'
+
 import Link from 'next/link'
 import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
-
-const stats = [
-  { label: 'Total Venues', value: '3', change: '+1 this month' },
-  { label: 'Upcoming Events', value: '12', change: '4 this week' },
-  { label: 'Pending Inquiries', value: '5', change: '2 new' },
-  { label: 'Confirmed Bookings', value: '8', change: '$24,500 revenue' },
-]
+import { Skeleton } from '../components/ui/Skeleton'
+import { useVenues } from '../hooks/useVenues'
+import { useAllOccasions } from '../hooks/useOccasions'
 
 const recentActivity = [
   { id: '1', text: 'New inquiry for Trades Hall — Wedding, Jun 15', time: '2 hours ago', type: 'inquiry' as const },
@@ -24,6 +22,31 @@ const badgeVariant: Record<string, 'info' | 'gold' | 'success' | 'default'> = {
 }
 
 export default function DashboardPage() {
+  const { venues, loading: venuesLoading } = useVenues()
+  const { occasions, loading: occasionsLoading } = useAllOccasions()
+
+  const loading = venuesLoading || occasionsLoading
+
+  const upcomingEvents = occasions.filter(
+    (o) => o.status !== 'cancelled' && o.status !== 'completed' && new Date(o.dateStart) > new Date(),
+  )
+  const pendingInquiries = occasions.filter((o) => o.status === 'inquiry')
+  const confirmedBookings = occasions.filter((o) => o.status === 'confirmed')
+  const totalRevenue = confirmedBookings.reduce((sum, o) => sum + (o.budget ?? 0), 0)
+
+  const stats = [
+    { label: 'Total Venues', value: String(venues.length), change: '' },
+    { label: 'Upcoming Events', value: String(upcomingEvents.length), change: '' },
+    { label: 'Pending Inquiries', value: String(pendingInquiries.length), change: '' },
+    {
+      label: 'Confirmed Bookings',
+      value: String(confirmedBookings.length),
+      change: totalRevenue > 0
+        ? `${new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(totalRevenue)} revenue`
+        : '',
+    },
+  ]
+
   return (
     <div className="space-y-8 max-w-6xl">
       <div>
@@ -33,13 +56,21 @@ export default function DashboardPage() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat) => (
-          <Card key={stat.label}>
-            <p className="text-xs text-surface-60 uppercase tracking-wider">{stat.label}</p>
-            <p className="text-3xl font-bold text-surface-95 mt-1">{stat.value}</p>
-            <p className="text-xs text-surface-60 mt-2">{stat.change}</p>
-          </Card>
-        ))}
+        {loading
+          ? Array.from({ length: 4 }, (_, i) => (
+              <Card key={i}>
+                <Skeleton width="w-24" height="h-3" />
+                <Skeleton width="w-16" height="h-8" className="mt-2" />
+                <Skeleton width="w-20" height="h-3" className="mt-3" />
+              </Card>
+            ))
+          : stats.map((stat) => (
+              <Card key={stat.label}>
+                <p className="text-xs text-surface-60 uppercase tracking-wider">{stat.label}</p>
+                <p className="text-3xl font-bold text-surface-95 mt-1">{stat.value}</p>
+                {stat.change && <p className="text-xs text-surface-60 mt-2">{stat.change}</p>}
+              </Card>
+            ))}
       </div>
 
       {/* Quick Actions */}

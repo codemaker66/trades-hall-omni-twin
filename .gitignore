@@ -3,6 +3,25 @@ dist
 .vite
 .turbo
 .next
+
+# Environment
 .env
 .env.local
 .env.*.local
+
+# Logs
+*.log
+.logs/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+nul
+
+# Build caches
+*.tsbuildinfo
+coverage/
+
+# IDE (uncomment to share settings)
+# .idea/
+# .vscode/

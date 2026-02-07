@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  validate:
+  validate-web:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -34,6 +34,81 @@ jobs:
 
       - name: Build
         run: npm run -w apps/web build
+
+  validate-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Type Check Server
+        run: npm run -w apps/server typecheck
+
+      - name: Type Check DB
+        run: npm run -w packages/db typecheck
+
+      - name: Test Server
+        run: npm run -w apps/server test
+
+  validate-packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Type Check Engine
+        run: npx -w packages/engine tsc --noEmit
+
+      - name: Type Check Pricing Engine
+        run: npx -w packages/pricing-engine tsc --noEmit
+
+      - name: Type Check Shared
+        run: npx -w packages/shared tsc --noEmit
+
+      - name: Test Engine
+        run: npm run -w packages/engine test
+
+      - name: Test Pricing Engine
+        run: npm run -w packages/pricing-engine test
+
+      - name: Test Shared
+        run: npm run -w packages/shared test
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
 
       - name: Audit
         run: npm audit --audit-level=moderate

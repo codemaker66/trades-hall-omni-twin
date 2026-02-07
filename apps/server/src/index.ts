@@ -11,7 +11,18 @@ import { catalogRoutes } from './routes/catalog'
 
 const app = new Hono()
 
-app.use('*', cors())
+const ALLOWED_ORIGINS = (process.env['CORS_ORIGINS'] ?? 'http://localhost:3000').split(',')
+
+app.use(
+  '*',
+  cors({
+    origin: ALLOWED_ORIGINS,
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    maxAge: 86400,
+  }),
+)
 
 app.get('/health', async (c) => {
   const checks: Record<string, string> = {}

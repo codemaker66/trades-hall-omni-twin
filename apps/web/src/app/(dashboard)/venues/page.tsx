@@ -7,51 +7,10 @@ import { Badge } from '../../components/ui/Badge'
 import { Input } from '../../components/ui/Input'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { Button } from '../../components/ui/Button'
-
-interface Venue {
-  id: string
-  name: string
-  slug: string
-  venueType: string
-  capacity: number | null
-  status: 'draft' | 'published' | 'archived'
-  address: string | null
-  updatedAt: string
-}
-
-// Placeholder data — will be replaced with API call
-const mockVenues: Venue[] = [
-  {
-    id: '1',
-    name: 'Trades Hall',
-    slug: 'trades-hall',
-    venueType: 'ballroom',
-    capacity: 500,
-    status: 'published',
-    address: '54 Victoria St, Melbourne VIC 3000',
-    updatedAt: '2026-02-05T10:30:00Z',
-  },
-  {
-    id: '2',
-    name: 'Garden Terrace',
-    slug: 'garden-terrace',
-    venueType: 'outdoor',
-    capacity: 200,
-    status: 'draft',
-    address: '12 Park Lane, Melbourne VIC 3000',
-    updatedAt: '2026-02-04T15:00:00Z',
-  },
-  {
-    id: '3',
-    name: 'Conference Centre',
-    slug: 'conference-centre',
-    venueType: 'conference',
-    capacity: 300,
-    status: 'published',
-    address: '88 Collins St, Melbourne VIC 3000',
-    updatedAt: '2026-02-03T09:00:00Z',
-  },
-]
+import { SkeletonCard } from '../../components/ui/Skeleton'
+import { ErrorAlert } from '../../components/ui/ErrorAlert'
+import { useVenues } from '../../hooks/useVenues'
+import { CreateVenueModal } from './CreateVenueModal'
 
 const statusBadge: Record<string, 'success' | 'gold' | 'default'> = {
   published: 'success',
@@ -62,13 +21,15 @@ const statusBadge: Record<string, 'success' | 'gold' | 'default'> = {
 type ViewMode = 'grid' | 'list'
 
 export default function VenuesPage() {
+  const { venues, loading, error, refetch } = useVenues()
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
+  const [showCreate, setShowCreate] = useState(false)
 
-  const filtered = mockVenues.filter(
+  const filtered = venues.filter(
     (v) =>
       v.name.toLowerCase().includes(search.toLowerCase()) ||
-      v.venueType.toLowerCase().includes(search.toLowerCase()),
+      (v.venueType ?? '').toLowerCase().includes(search.toLowerCase()),
   )
 
   return (
@@ -76,9 +37,9 @@ export default function VenuesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-surface-95">Venues</h1>
-          <p className="text-sm text-surface-60 mt-1">{mockVenues.length} venues</p>
+          <p className="text-sm text-surface-60 mt-1">{venues.length} venues</p>
         </div>
-        <Button variant="primary">+ New Venue</Button>
+        <Button variant="primary" onClick={() => setShowCreate(true)}>+ New Venue</Button>
       </div>
 
       {/* Search + View Toggle */}
@@ -112,62 +73,77 @@ export default function VenuesPage() {
         </div>
       </div>
 
-      {/* Results */}
-      {filtered.length === 0 ? (
-        <EmptyState
-          title="No venues found"
-          description={search ? 'Try adjusting your search.' : 'Create your first venue to get started.'}
-          action={!search ? <Button variant="primary">+ New Venue</Button> : undefined}
-        />
-      ) : viewMode === 'grid' ? (
+      {/* Loading */}
+      {loading && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((venue) => (
-            <Link key={venue.id} href={`/venues/${venue.id}`}>
-              <Card className="hover:border-surface-40 transition-colors cursor-pointer">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-surface-90">{venue.name}</h3>
-                    <p className="text-xs text-surface-60 capitalize">{venue.venueType}</p>
-                  </div>
-                  <Badge variant={statusBadge[venue.status]}>{venue.status}</Badge>
-                </div>
-                {venue.address && (
-                  <p className="text-xs text-surface-60 mb-2 truncate">{venue.address}</p>
-                )}
-                <div className="flex items-center justify-between text-xs text-surface-60">
-                  {venue.capacity && <span>Capacity: {venue.capacity}</span>}
-                  <span>Updated {new Date(venue.updatedAt).toLocaleDateString()}</span>
-                </div>
-              </Card>
-            </Link>
+          {Array.from({ length: 3 }, (_, i) => (
+            <SkeletonCard key={i} />
           ))}
         </div>
-      ) : (
-        <Card noPadding>
-          <div className="divide-y divide-surface-20">
+      )}
+
+      {/* Error */}
+      {error && <ErrorAlert message={error} onRetry={refetch} />}
+
+      {/* Results */}
+      {!loading && !error && (
+        filtered.length === 0 ? (
+          <EmptyState
+            title="No venues found"
+            description={search ? 'Try adjusting your search.' : 'Create your first venue to get started.'}
+            action={!search ? <Button variant="primary" onClick={() => setShowCreate(true)}>+ New Venue</Button> : undefined}
+          />
+        ) : viewMode === 'grid' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((venue) => (
-              <Link
-                key={venue.id}
-                href={`/venues/${venue.id}`}
-                className="flex items-center justify-between px-5 py-3 hover:bg-surface-15 transition-colors"
-              >
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-surface-90">{venue.name}</h3>
-                    <p className="text-xs text-surface-60 capitalize">{venue.venueType}{venue.address ? ` — ${venue.address}` : ''}</p>
+              <Link key={venue.id} href={`/venues/${venue.id}`}>
+                <Card className="hover:border-surface-40 transition-colors cursor-pointer">
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-surface-90">{venue.name}</h3>
+                      <p className="text-xs text-surface-60 capitalize">{venue.venueType}</p>
+                    </div>
+                    <Badge variant={statusBadge[venue.status]}>{venue.status}</Badge>
                   </div>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  {venue.capacity && (
-                    <span className="text-xs text-surface-60">Cap: {venue.capacity}</span>
+                  {venue.address && (
+                    <p className="text-xs text-surface-60 mb-2 truncate">{venue.address}</p>
                   )}
-                  <Badge variant={statusBadge[venue.status]}>{venue.status}</Badge>
-                </div>
+                  <div className="flex items-center justify-between text-xs text-surface-60">
+                    {venue.capacity && <span>Capacity: {venue.capacity}</span>}
+                    <span>Updated {new Date(venue.updatedAt).toLocaleDateString()}</span>
+                  </div>
+                </Card>
               </Link>
             ))}
           </div>
-        </Card>
+        ) : (
+          <Card noPadding>
+            <div className="divide-y divide-surface-20">
+              {filtered.map((venue) => (
+                <Link
+                  key={venue.id}
+                  href={`/venues/${venue.id}`}
+                  className="flex items-center justify-between px-5 py-3 hover:bg-surface-15 transition-colors"
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-semibold text-surface-90">{venue.name}</h3>
+                      <p className="text-xs text-surface-60 capitalize">{venue.venueType}{venue.address ? ` — ${venue.address}` : ''}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    {venue.capacity && (
+                      <span className="text-xs text-surface-60">Cap: {venue.capacity}</span>
+                    )}
+                    <Badge variant={statusBadge[venue.status]}>{venue.status}</Badge>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </Card>
+        )
       )}
+      <CreateVenueModal open={showCreate} onClose={() => setShowCreate(false)} onCreated={refetch} />
     </div>
   )
 }

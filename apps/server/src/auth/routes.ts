@@ -5,14 +5,17 @@ import { eq } from 'drizzle-orm'
 import { hashPassword, verifyPassword } from './password'
 import { createSession, deleteSession } from './sessions'
 import { requireAuth, getUser, getSessionIdFromContext, SESSION_COOKIE } from './middleware'
+import { rateLimit } from '../lib/rate-limit'
 import type { RegisterInput, LoginInput, AuthResponse, AuthError } from '@omni-twin/types'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 })
+
 const auth = new Hono()
 
 /** POST /auth/register */
-auth.post('/register', async (c) => {
+auth.post('/register', authLimiter, async (c) => {
   const body = await c.req.json<RegisterInput>()
 
   if (!body.email || !EMAIL_RE.test(body.email)) {
@@ -80,7 +83,7 @@ auth.post('/register', async (c) => {
 })
 
 /** POST /auth/login */
-auth.post('/login', async (c) => {
+auth.post('/login', authLimiter, async (c) => {
   const body = await c.req.json<LoginInput>()
 
   if (!body.email || !body.password) {
