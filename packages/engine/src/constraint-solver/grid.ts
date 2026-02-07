@@ -5,17 +5,19 @@
  * Each cell tracks occupancy state for fast placement validation.
  */
 
-import type { RoomConfig, Rect, Exit, Point2D } from './types'
+import type { RoomConfig, Rect, Exit, CellStateValue } from './types'
+import { CellState } from './types'
 
-// ─── Cell States ────────────────────────────────────────────────────────────
+// ─── Backward-compatible Cell State Exports ─────────────────────────────────
 
-export const CELL_EMPTY = 0
-export const CELL_WALL = 1
-export const CELL_OBSTACLE = 2
-export const CELL_OCCUPIED = 3
-export const CELL_EXIT_ZONE = 4
+export const CELL_EMPTY = CellState.EMPTY
+export const CELL_WALL = CellState.WALL
+export const CELL_OBSTACLE = CellState.OBSTACLE
+export const CELL_OCCUPIED = CellState.OCCUPIED
+export const CELL_EXIT_ZONE = CellState.EXIT_ZONE
 
-export type CellState = typeof CELL_EMPTY | typeof CELL_WALL | typeof CELL_OBSTACLE | typeof CELL_OCCUPIED | typeof CELL_EXIT_ZONE
+/** @deprecated Use CellStateValue from types.ts */
+export type CellStateCompat = CellStateValue
 
 // ─── Grid ───────────────────────────────────────────────────────────────────
 
@@ -39,7 +41,7 @@ export class LayoutGrid {
 
     // Mark obstacles
     for (const obs of room.obstacles) {
-      this.markRect(obs, CELL_OBSTACLE)
+      this.markRect(obs, CellState.OBSTACLE)
     }
 
     // Mark exit clearance zones
@@ -72,27 +74,27 @@ export class LayoutGrid {
 
   // ─── Cell access ────────────────────────────────────────────────────────
 
-  /** Get cell state. Returns CELL_WALL for out-of-bounds. */
-  get(col: number, row: number): CellState {
-    if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return CELL_WALL
-    return this.cells[row * this.cols + col] as CellState
+  /** Get cell state. Returns WALL for out-of-bounds. */
+  get(col: number, row: number): CellStateValue {
+    if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return CellState.WALL
+    return this.cells[row * this.cols + col] as CellStateValue
   }
 
   /** Set cell state. */
-  private set(col: number, row: number, state: CellState): void {
+  private set(col: number, row: number, state: CellStateValue): void {
     if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return
     this.cells[row * this.cols + col] = state
   }
 
   /** Check if a cell is free for placement. */
   isFree(col: number, row: number): boolean {
-    return this.get(col, row) === CELL_EMPTY
+    return this.get(col, row) === CellState.EMPTY
   }
 
   // ─── Rect operations ───────────────────────────────────────────────────
 
   /** Mark a world-space rectangle with a cell state. */
-  private markRect(rect: Rect, state: CellState): void {
+  private markRect(rect: Rect, state: CellStateValue): void {
     const minCol = this.toCol(rect.x)
     const minRow = this.toRow(rect.z)
     const maxCol = this.toCol(rect.x + rect.width)
@@ -106,7 +108,6 @@ export class LayoutGrid {
 
   /** Mark an exit's clearance zone (fire code: area in front of exit must stay clear). */
   private markExitZone(exit: Exit, clearance = 1.12): void {
-    // Mark a rectangle in front of the exit
     const hw = exit.width / 2
     const cos = Math.cos(exit.facing)
     const sin = Math.sin(exit.facing)
@@ -122,7 +123,7 @@ export class LayoutGrid {
 
     this.markRect(
       { x: Math.max(0, rectX), z: Math.max(0, rectZ), width: rectW, depth: rectD },
-      CELL_EXIT_ZONE,
+      CellState.EXIT_ZONE,
     )
   }
 
@@ -144,9 +145,7 @@ export class LayoutGrid {
     return true
   }
 
-  /**
-   * Mark a furniture footprint as occupied.
-   */
+  /** Mark a furniture footprint as occupied. */
   occupy(cx: number, cz: number, halfW: number, halfD: number): void {
     const minCol = this.toCol(cx - halfW)
     const minRow = this.toRow(cz - halfD)
@@ -155,14 +154,12 @@ export class LayoutGrid {
 
     for (let r = minRow; r <= maxRow; r++) {
       for (let c = minCol; c <= maxCol; c++) {
-        this.set(c, r, CELL_OCCUPIED)
+        this.set(c, r, CellState.OCCUPIED)
       }
     }
   }
 
-  /**
-   * Unmark a furniture footprint (set back to empty).
-   */
+  /** Unmark a furniture footprint (set back to empty). */
   vacate(cx: number, cz: number, halfW: number, halfD: number): void {
     const minCol = this.toCol(cx - halfW)
     const minRow = this.toRow(cz - halfD)
@@ -171,8 +168,8 @@ export class LayoutGrid {
 
     for (let r = minRow; r <= maxRow; r++) {
       for (let c = minCol; c <= maxCol; c++) {
-        if (this.get(c, r) === CELL_OCCUPIED) {
-          this.set(c, r, CELL_EMPTY)
+        if (this.get(c, r) === CellState.OCCUPIED) {
+          this.set(c, r, CellState.EMPTY)
         }
       }
     }
@@ -186,9 +183,6 @@ export class LayoutGrid {
   hasAisleClearance(cx: number, cz: number, halfW: number, halfD: number, minAisle: number): boolean {
     const aisleCells = Math.ceil(minAisle / this.cellSize)
 
-    // Check clearance on left/right (X axis)
-    const leftCol = this.toCol(cx - halfW) - aisleCells
-    const rightCol = this.toCol(cx + halfW) + aisleCells
     const topRow = this.toRow(cz - halfD)
     const bottomRow = this.toRow(cz + halfD)
 
@@ -197,21 +191,20 @@ export class LayoutGrid {
 
     for (let r = topRow; r <= bottomRow; r++) {
       for (let c = this.toCol(cx - halfW) - aisleCells; c < this.toCol(cx - halfW); c++) {
-        if (this.get(c, r) === CELL_OCCUPIED) { leftClear = false; break }
+        if (this.get(c, r) === CellState.OCCUPIED) { leftClear = false; break }
       }
       if (!leftClear) break
     }
 
     for (let r = topRow; r <= bottomRow; r++) {
-      for (let c = this.toCol(cx + halfW) + 1; c <= rightCol; c++) {
-        if (this.get(c, r) === CELL_OCCUPIED) { rightClear = false; break }
+      for (let c = this.toCol(cx + halfW) + 1; c <= this.toCol(cx + halfW) + aisleCells; c++) {
+        if (this.get(c, r) === CellState.OCCUPIED) { rightClear = false; break }
       }
       if (!rightClear) break
     }
 
     if (leftClear || rightClear) return true
 
-    // Check clearance on top/bottom (Z axis)
     let topClear = true
     let bottomClear2 = true
     const leftC = this.toCol(cx - halfW)
@@ -219,14 +212,14 @@ export class LayoutGrid {
 
     for (let c = leftC; c <= rightC; c++) {
       for (let r = this.toRow(cz - halfD) - aisleCells; r < this.toRow(cz - halfD); r++) {
-        if (this.get(c, r) === CELL_OCCUPIED) { topClear = false; break }
+        if (this.get(c, r) === CellState.OCCUPIED) { topClear = false; break }
       }
       if (!topClear) break
     }
 
     for (let c = leftC; c <= rightC; c++) {
       for (let r = this.toRow(cz + halfD) + 1; r <= this.toRow(cz + halfD) + aisleCells; r++) {
-        if (this.get(c, r) === CELL_OCCUPIED) { bottomClear2 = false; break }
+        if (this.get(c, r) === CellState.OCCUPIED) { bottomClear2 = false; break }
       }
       if (!bottomClear2) break
     }
@@ -238,7 +231,7 @@ export class LayoutGrid {
   freeCellCount(): number {
     let count = 0
     for (let i = 0; i < this.cells.length; i++) {
-      if (this.cells[i] === CELL_EMPTY) count++
+      if (this.cells[i] === CellState.EMPTY) count++
     }
     return count
   }
@@ -246,6 +239,24 @@ export class LayoutGrid {
   /** Total cell count. */
   totalCells(): number {
     return this.cols * this.rows
+  }
+
+  /**
+   * Rebuild occupancy from a placements array.
+   * Clears all OCCUPIED cells, then re-occupies from placements.
+   * Preserves WALL, OBSTACLE, and EXIT_ZONE markers.
+   */
+  rebuildOccupancy(room: RoomConfig, placements: { x: number; z: number; effectiveWidth: number; effectiveDepth: number }[]): void {
+    // Clear all occupied cells back to empty
+    for (let i = 0; i < this.cells.length; i++) {
+      if (this.cells[i] === CellState.OCCUPIED) {
+        this.cells[i] = CellState.EMPTY
+      }
+    }
+    // Re-occupy from placements
+    for (const p of placements) {
+      this.occupy(p.x, p.z, p.effectiveWidth / 2, p.effectiveDepth / 2)
+    }
   }
 
   /** Create a snapshot for backtracking. */

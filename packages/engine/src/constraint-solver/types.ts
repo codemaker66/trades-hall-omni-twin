@@ -1,10 +1,78 @@
 /**
  * Types for the constraint-based layout solver (T1).
  *
- * The solver takes a room configuration and furniture requests, then produces
- * an optimal furniture layout satisfying all hard constraints while maximizing
- * soft objectives.
+ * Follows Jane Street "make illegal states unrepresentable" principle:
+ * branded types, discriminated unions, and exhaustive matching throughout.
  */
+
+// ─── Branded Types ──────────────────────────────────────────────────────────
+
+declare const _validated: unique symbol
+
+/**
+ * A layout that has passed full hard-constraint validation.
+ * Can only be produced via `markValidated()` — prevents passing
+ * unvalidated layouts where validated ones are required.
+ */
+export type ValidatedLayout = Placement[] & { readonly [_validated]: true }
+
+/** Brand a layout as validated (only call after validation passes). */
+export function markValidated(placements: Placement[]): ValidatedLayout {
+  return placements as ValidatedLayout
+}
+
+// ─── Violation Types ────────────────────────────────────────────────────────
+
+export const VIOLATION_TYPES = [
+  'overlap',
+  'out-of-bounds',
+  'aisle-too-narrow',
+  'exit-blocked',
+  'obstacle-overlap',
+] as const
+
+export type ViolationType = (typeof VIOLATION_TYPES)[number]
+
+/** Exhaustive check — compile error if a new ViolationType is added without handling. */
+export function assertNeverViolation(type: never): never {
+  throw new Error(`Unhandled violation type: ${String(type)}`)
+}
+
+// ─── Cell States ────────────────────────────────────────────────────────────
+
+export const CellState = {
+  EMPTY: 0,
+  WALL: 1,
+  OBSTACLE: 2,
+  OCCUPIED: 3,
+  EXIT_ZONE: 4,
+} as const
+
+export type CellStateValue = (typeof CellState)[keyof typeof CellState]
+
+// ─── Cardinal Rotation ──────────────────────────────────────────────────────
+
+/** 0 = 0°, 1 = 90°, 2 = 180°, 3 = 270°. */
+export type CardinalRotation = 0 | 1 | 2 | 3
+
+/** Convert arbitrary radians to nearest cardinal rotation. */
+export function toCardinalRotation(radians: number): CardinalRotation {
+  const TWO_PI = Math.PI * 2
+  const normalized = ((radians % TWO_PI) + TWO_PI) % TWO_PI
+  return (Math.round(normalized / (Math.PI / 2)) % 4) as CardinalRotation
+}
+
+/** Convert cardinal rotation back to radians. */
+export function cardinalToRadians(r: CardinalRotation): number {
+  return r * (Math.PI / 2)
+}
+
+// ─── Solver Phase (discriminated union) ─────────────────────────────────────
+
+export type SolverPhase =
+  | { phase: 'greedy'; placed: number; total: number }
+  | { phase: 'annealing'; iteration: number; temperature: number; bestScore: number }
+  | { phase: 'complete'; result: LayoutResult }
 
 // ─── Room ───────────────────────────────────────────────────────────────────
 
@@ -100,10 +168,20 @@ export interface Placement {
 
 /** Hard constraint violation. */
 export interface Violation {
-  type: 'overlap' | 'out-of-bounds' | 'aisle-too-narrow' | 'exit-blocked' | 'obstacle-overlap'
+  type: ViolationType
   message: string
   /** Indices of placements involved. */
   placements: number[]
+}
+
+/** Table-to-chair grouping produced by the solver. */
+export interface TableGrouping {
+  /** Index of the table placement in the placements array. */
+  tableIndex: number
+  /** Indices of chair placements grouped around this table. */
+  chairIndices: number[]
+  /** How many chairs were requested per table. */
+  chairsPerUnit: number
 }
 
 /** Soft objective weights (0-1, sum not required to be 1). */
@@ -160,6 +238,12 @@ export interface SolverOptions {
   annealingCoolingRate?: number
   /** Maximum placement attempts per item in greedy phase (default 200). */
   maxPlacementAttempts?: number
+  /** PRNG seed for deterministic results (default 42). */
+  seed?: number
+  /** Enable limited backtracking in greedy phase (default true). */
+  enableBacktracking?: boolean
+  /** Number of SA restarts from best known solution (default 3). */
+  maxRestarts?: number
 }
 
 /** Solver result. */
@@ -172,6 +256,8 @@ export interface LayoutResult {
   scores: LayoutScores
   /** Hard constraint violations (empty if feasible). */
   violations: Violation[]
+  /** Table-to-chair groupings (empty if no chairsPerUnit). */
+  groupings: TableGrouping[]
   /** Solver statistics. */
   stats: {
     /** Total solver time in ms. */
@@ -182,6 +268,10 @@ export interface LayoutResult {
     requestedCount: number
     /** Simulated annealing iterations run. */
     annealingIterations: number
+    /** Number of SA restarts performed. */
+    restarts: number
+    /** Number of backtracks in greedy phase. */
+    backtracks: number
   }
 }
 

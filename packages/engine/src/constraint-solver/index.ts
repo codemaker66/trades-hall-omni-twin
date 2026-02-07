@@ -6,11 +6,16 @@ export {
 
 export {
   validateLayout,
+  validateLayoutSpatial,
   checkNoOverlap,
+  checkNoOverlapSpatial,
   checkBounds,
   checkObstacles,
   checkExitClearance,
   checkAisleWidth,
+  checkAisleWidthSpatial,
+  validateSinglePlacement,
+  violationSeverity,
 } from './constraints'
 
 export {
@@ -24,6 +29,18 @@ export {
 } from './objectives'
 
 export { LayoutGrid } from './grid'
+export { SolverSpatialHash } from './spatial-hash'
+export { IncrementalConstraintGraph } from './incremental'
+export { generateChairPositions, placeChairGroups } from './chair-grouping'
+
+export {
+  markValidated,
+  toCardinalRotation,
+  cardinalToRadians,
+  assertNeverViolation,
+  CellState,
+  VIOLATION_TYPES,
+} from './types'
 
 export type {
   RoomConfig,
@@ -36,8 +53,14 @@ export type {
   SolverOptions,
   ValidationResult,
   Violation,
+  ViolationType,
   Exit,
   Point2D,
   Rect,
   SolverFurnitureType,
+  ValidatedLayout,
+  CardinalRotation,
+  CellStateValue,
+  SolverPhase,
+  TableGrouping,
 } from './types'

@@ -1,8 +1,17 @@
 /**
  * Layout solver: greedy constraint-aware placement + simulated annealing optimization.
  *
- * Phase 1: Greedy placement with MRV heuristic (most constrained items first).
- * Phase 2: Simulated annealing to optimize soft objectives while maintaining feasibility.
+ * Phase 1: Greedy placement with MRV heuristic + limited backtracking.
+ * Phase 2: Adaptive simulated annealing (room-scaled displacement, swap moves,
+ *          early termination, random restarts) with spatial-hash acceleration.
+ * Phase 3: Chair-table grouping (chairsPerUnit).
+ *
+ * Jane Street principles applied:
+ * - Incremental validation via spatial hash (O(k) per iteration instead of O(n²))
+ * - Room-adaptive displacement scaling (sqrt(w*d)/10)
+ * - Three move types: translate (60%), rotate (20%), swap (20%)
+ * - Convergence-based early termination (200-iteration window, 0.001 threshold)
+ * - Random restarts from best known solution
  */
 
 import type {
@@ -10,8 +19,10 @@ import type {
   RoomConfig, SolverOptions, ObjectiveWeights, Point2D,
 } from './types'
 import { LayoutGrid } from './grid'
-import { validateLayout } from './constraints'
+import { validateLayout, validateSinglePlacement } from './constraints'
 import { scoreLayout, DEFAULT_WEIGHTS } from './objectives'
+import { SolverSpatialHash } from './spatial-hash'
+import { placeChairGroups } from './chair-grouping'
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
@@ -23,7 +34,19 @@ const DEFAULT_OPTIONS: Required<SolverOptions> = {
   annealingInitialTemp: 10,
   annealingCoolingRate: 0.995,
   maxPlacementAttempts: 200,
+  seed: 42,
+  enableBacktracking: true,
+  maxRestarts: 3,
 }
+
+/** Maximum backtrack attempts in greedy phase. */
+const MAX_BACKTRACKS = 20
+
+/** Convergence window for early termination (iterations). */
+const CONVERGENCE_WINDOW = 200
+
+/** Minimum score improvement to avoid convergence. */
+const CONVERGENCE_THRESHOLD = 0.001
 
 // ─── Deterministic PRNG ─────────────────────────────────────────────────────
 
@@ -89,7 +112,7 @@ function getFixedZonePosition(
   }
 }
 
-// ─── Phase 1: Greedy Placement ──────────────────────────────────────────────
+// ─── Phase 1: Greedy Placement with Backtracking ───────────────────────────
 
 interface PlacementTask {
   specIndex: number
@@ -119,24 +142,40 @@ function greedyPlace(
   room: RoomConfig,
   specs: FurnitureSpec[],
   grid: LayoutGrid,
+  spatialHash: SolverSpatialHash,
   opts: Required<SolverOptions>,
   rng: () => number,
-): Placement[] {
+): { placements: Placement[]; backtracks: number } {
   const placements: Placement[] = []
   const tasks = buildTaskList(specs)
+  let backtracks = 0
 
-  for (const task of tasks) {
+  for (let ti = 0; ti < tasks.length; ti++) {
+    const task = tasks[ti]!
     const { spec, specIndex, instanceIndex } = task
-    const placed = tryPlaceItem(room, spec, specIndex, instanceIndex, grid, opts, rng)
+    const placed = tryPlaceItem(room, spec, specIndex, instanceIndex, grid, spatialHash, opts, rng)
+
     if (placed) {
       placements.push(placed)
       const hw = placed.effectiveWidth / 2
       const hd = placed.effectiveDepth / 2
       grid.occupy(placed.x, placed.z, hw, hd)
+      spatialHash.insert(placements.length - 1, placed.x, placed.z, hw, hd)
+    } else if (opts.enableBacktracking && backtracks < MAX_BACKTRACKS && placements.length > 0) {
+      // Backtrack: remove last placed item and retry
+      backtracks++
+      const removed = placements.pop()!
+      const rhw = removed.effectiveWidth / 2
+      const rhd = removed.effectiveDepth / 2
+      grid.vacate(removed.x, removed.z, rhw, rhd)
+      spatialHash.remove(placements.length) // was at the end
+      ti -= 2 // retry previous task (will be incremented by loop)
+      if (ti < -1) ti = -1
     }
+    // If no backtracking or max backtracks reached, skip this item
   }
 
-  return placements
+  return { placements, backtracks }
 }
 
 function tryPlaceItem(
@@ -145,12 +184,13 @@ function tryPlaceItem(
   specIndex: number,
   instanceIndex: number,
   grid: LayoutGrid,
+  spatialHash: SolverSpatialHash,
   opts: Required<SolverOptions>,
   rng: () => number,
 ): Placement | null {
   const rotations = [0, Math.PI / 2]
 
-  // Fixed zone: try the specific position
+  // Fixed zone: try the specific position, then fall back to general placement
   if (spec.fixedZone) {
     for (const rot of rotations) {
       const [ew, ed] = effectiveDims(spec, rot)
@@ -159,6 +199,7 @@ function tryPlaceItem(
         return makePlacement(spec, specIndex, instanceIndex, pos.x, pos.z, rot)
       }
     }
+    // Fall through to general placement if fixed zone is occupied
   }
 
   // Wall-adjacent: try along walls first
@@ -212,94 +253,189 @@ function tryPlaceItem(
   return null // Could not place this item
 }
 
-// ─── Phase 2: Simulated Annealing ──────────────────────────────────────────
+// ─── Phase 2: Adaptive Simulated Annealing ─────────────────────────────────
 
 function simulatedAnnealing(
   room: RoomConfig,
   specs: FurnitureSpec[],
   placements: Placement[],
   grid: LayoutGrid,
+  spatialHash: SolverSpatialHash,
   opts: Required<SolverOptions>,
   weights: ObjectiveWeights,
   rng: () => number,
-): { placements: Placement[]; iterations: number } {
-  if (placements.length < 2) return { placements, iterations: 0 }
+): { placements: Placement[]; iterations: number; restarts: number } {
+  if (placements.length < 2) return { placements, iterations: 0, restarts: 0 }
+
+  // Room-adaptive displacement scaling
+  const roomScale = Math.sqrt(room.width * room.depth) / 10
+  const displacementFactor = roomScale * 0.05
 
   let current = [...placements]
   let currentScore = scoreLayout(room, specs, current, weights).total
   let best = [...current]
   let bestScore = currentScore
   let temp = opts.annealingInitialTemp
-  let iterations = 0
+  let totalIterations = 0
+  let restartCount = 0
 
-  for (let i = 0; i < opts.annealingIterations; i++) {
-    iterations++
-    temp *= opts.annealingCoolingRate
+  // Convergence tracking
+  let windowBestScore = currentScore
 
-    // Pick a random item to perturb
-    const idx = Math.floor(rng() * current.length)
-    const old = current[idx]!
+  for (let restart = 0; restart <= opts.maxRestarts; restart++) {
+    if (restart > 0) {
+      // Restart from best known solution
+      current = [...best]
+      currentScore = bestScore
+      temp = opts.annealingInitialTemp * (1 - restart / (opts.maxRestarts + 1))
+      windowBestScore = currentScore
+      restartCount++
 
-    // Generate a neighbor: small random displacement or rotation
-    const moveType = rng()
-    let candidate: Placement
+      // Rebuild spatial hash for restarted layout
+      spatialHash.buildFromPlacements(current)
 
-    if (moveType < 0.7) {
-      // Positional perturbation (scaled by temperature)
-      const dx = (rng() - 0.5) * temp * 0.2
-      const dz = (rng() - 0.5) * temp * 0.2
-      const nx = Math.max(old.effectiveWidth / 2, Math.min(room.width - old.effectiveWidth / 2, old.x + dx))
-      const nz = Math.max(old.effectiveDepth / 2, Math.min(room.depth - old.effectiveDepth / 2, old.z + dz))
-      // Snap
-      const sx = Math.round(nx / opts.gridCellSize) * opts.gridCellSize
-      const sz = Math.round(nz / opts.gridCellSize) * opts.gridCellSize
-      candidate = { ...old, x: sx, z: sz }
-    } else {
-      // Rotation (90 degree flip)
-      const newRot = old.rotation === 0 ? Math.PI / 2 : 0
-      const spec = specs[old.specIndex]!
-      const [ew, ed] = effectiveDims(spec, newRot)
-      candidate = { ...old, rotation: newRot, effectiveWidth: ew, effectiveDepth: ed }
+      // Rebuild grid for restarted layout
+      grid.rebuildOccupancy(room, current)
     }
 
-    // Temporarily vacate old, check if new position is valid
-    const hw = old.effectiveWidth / 2
-    const hd = old.effectiveDepth / 2
-    grid.vacate(old.x, old.z, hw, hd)
+    for (let i = 0; i < opts.annealingIterations; i++) {
+      totalIterations++
+      temp *= opts.annealingCoolingRate
 
-    const nhw = candidate.effectiveWidth / 2
-    const nhd = candidate.effectiveDepth / 2
-
-    if (grid.canPlace(candidate.x, candidate.z, nhw, nhd)) {
-      // Evaluate new layout
-      const trial = [...current]
-      trial[idx] = candidate
-      const trialViolations = validateLayout(room, trial, opts.minAisleWidth, opts.exitClearance)
-
-      if (trialViolations.length === 0) {
-        const trialScore = scoreLayout(room, specs, trial, weights).total
-
-        // Acceptance criterion
-        const delta = trialScore - currentScore
-        if (delta > 0 || rng() < Math.exp(delta / Math.max(temp, 0.001))) {
-          current = trial
-          currentScore = trialScore
-          grid.occupy(candidate.x, candidate.z, nhw, nhd)
-
-          if (trialScore > bestScore) {
-            best = [...trial]
-            bestScore = trialScore
-          }
-          continue
-        }
+      // Early termination: check convergence every CONVERGENCE_WINDOW iterations
+      if (i > 0 && i % CONVERGENCE_WINDOW === 0) {
+        const improvement = currentScore - windowBestScore
+        if (Math.abs(improvement) < CONVERGENCE_THRESHOLD) break
+        windowBestScore = currentScore
       }
-    }
 
-    // Revert: re-occupy old position
-    grid.occupy(old.x, old.z, hw, hd)
+      // Pick move type: translate (60%), rotate (20%), swap (20%)
+      const moveRoll = rng()
+      const idx = Math.floor(rng() * current.length)
+      const old = current[idx]!
+
+      let candidate: Placement
+
+      if (moveRoll < 0.6) {
+        // Positional perturbation (room-adaptive displacement)
+        const dx = (rng() - 0.5) * temp * displacementFactor
+        const dz = (rng() - 0.5) * temp * displacementFactor
+        const nx = Math.max(old.effectiveWidth / 2, Math.min(room.width - old.effectiveWidth / 2, old.x + dx))
+        const nz = Math.max(old.effectiveDepth / 2, Math.min(room.depth - old.effectiveDepth / 2, old.z + dz))
+        // Snap to grid
+        const sx = Math.round(nx / opts.gridCellSize) * opts.gridCellSize
+        const sz = Math.round(nz / opts.gridCellSize) * opts.gridCellSize
+        candidate = { ...old, x: sx, z: sz }
+      } else if (moveRoll < 0.8) {
+        // Rotation (90 degree flip)
+        const newRot = old.rotation === 0 ? Math.PI / 2 : 0
+        const spec = specs[old.specIndex]!
+        const [ew, ed] = effectiveDims(spec, newRot)
+        candidate = { ...old, rotation: newRot, effectiveWidth: ew, effectiveDepth: ed }
+      } else {
+        // Swap: exchange positions of two items
+        const idx2 = Math.floor(rng() * current.length)
+        if (idx2 === idx) continue // skip self-swap
+
+        const other = current[idx2]!
+        // Swap positions only (keep original rotations and specs)
+        const cand1 = { ...old, x: other.x, z: other.z }
+        const cand2 = { ...other, x: old.x, z: old.z }
+
+        // Temporarily vacate both
+        grid.vacate(old.x, old.z, old.effectiveWidth / 2, old.effectiveDepth / 2)
+        grid.vacate(other.x, other.z, other.effectiveWidth / 2, other.effectiveDepth / 2)
+
+        const canPlace1 = grid.canPlace(cand1.x, cand1.z, cand1.effectiveWidth / 2, cand1.effectiveDepth / 2)
+        const canPlace2 = grid.canPlace(cand2.x, cand2.z, cand2.effectiveWidth / 2, cand2.effectiveDepth / 2)
+
+        if (canPlace1 && canPlace2) {
+          const trial = [...current]
+          trial[idx] = cand1
+          trial[idx2] = cand2
+
+          // Update spatial hash
+          spatialHash.update(idx, cand1.x, cand1.z, cand1.effectiveWidth / 2, cand1.effectiveDepth / 2)
+          spatialHash.update(idx2, cand2.x, cand2.z, cand2.effectiveWidth / 2, cand2.effectiveDepth / 2)
+
+          // Incremental validation: check both swapped items
+          const v1 = validateSinglePlacement(room, trial, idx, spatialHash, opts.minAisleWidth, opts.exitClearance)
+          const v2 = validateSinglePlacement(room, trial, idx2, spatialHash, opts.minAisleWidth, opts.exitClearance)
+
+          if (v1.length === 0 && v2.length === 0) {
+            const trialScore = scoreLayout(room, specs, trial, weights).total
+            const delta = trialScore - currentScore
+            if (delta > 0 || rng() < Math.exp(delta / Math.max(temp, 0.001))) {
+              current = trial
+              currentScore = trialScore
+              grid.occupy(cand1.x, cand1.z, cand1.effectiveWidth / 2, cand1.effectiveDepth / 2)
+              grid.occupy(cand2.x, cand2.z, cand2.effectiveWidth / 2, cand2.effectiveDepth / 2)
+              if (trialScore > bestScore) {
+                best = [...trial]
+                bestScore = trialScore
+              }
+              continue
+            }
+          }
+
+          // Revert spatial hash
+          spatialHash.update(idx, old.x, old.z, old.effectiveWidth / 2, old.effectiveDepth / 2)
+          spatialHash.update(idx2, other.x, other.z, other.effectiveWidth / 2, other.effectiveDepth / 2)
+        }
+
+        // Revert grid
+        grid.occupy(old.x, old.z, old.effectiveWidth / 2, old.effectiveDepth / 2)
+        grid.occupy(other.x, other.z, other.effectiveWidth / 2, other.effectiveDepth / 2)
+        continue
+      }
+
+      // For translate/rotate moves: vacate old, try candidate
+      const hw = old.effectiveWidth / 2
+      const hd = old.effectiveDepth / 2
+      grid.vacate(old.x, old.z, hw, hd)
+
+      const nhw = candidate.effectiveWidth / 2
+      const nhd = candidate.effectiveDepth / 2
+
+      if (grid.canPlace(candidate.x, candidate.z, nhw, nhd)) {
+        // Incremental validation: only check the moved item and its neighbors
+        const trial = [...current]
+        trial[idx] = candidate
+
+        // Update spatial hash for the candidate position
+        spatialHash.update(idx, candidate.x, candidate.z, nhw, nhd)
+        const localViolations = validateSinglePlacement(
+          room, trial, idx, spatialHash, opts.minAisleWidth, opts.exitClearance,
+        )
+
+        if (localViolations.length === 0) {
+          const trialScore = scoreLayout(room, specs, trial, weights).total
+
+          // Acceptance criterion
+          const delta = trialScore - currentScore
+          if (delta > 0 || rng() < Math.exp(delta / Math.max(temp, 0.001))) {
+            current = trial
+            currentScore = trialScore
+            grid.occupy(candidate.x, candidate.z, nhw, nhd)
+
+            if (trialScore > bestScore) {
+              best = [...trial]
+              bestScore = trialScore
+            }
+            continue
+          }
+        }
+
+        // Revert spatial hash
+        spatialHash.update(idx, old.x, old.z, hw, hd)
+      }
+
+      // Revert: re-occupy old position
+      grid.occupy(old.x, old.z, hw, hd)
+    }
   }
 
-  return { placements: best, iterations }
+  return { placements: best, iterations: totalIterations, restarts: restartCount }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -312,17 +448,45 @@ export function solve(request: LayoutRequest): LayoutResult {
   const start = performance.now()
   const opts: Required<SolverOptions> = { ...DEFAULT_OPTIONS, ...request.options }
   const weights: ObjectiveWeights = { ...DEFAULT_WEIGHTS, ...request.objectives }
-  const rng = createRng(42) // deterministic seed for reproducibility
+  const rng = createRng(opts.seed)
 
-  // Phase 1: Greedy placement
+  // Initialize data structures
   const grid = new LayoutGrid(request.room, opts.gridCellSize)
-  let placements = greedyPlace(request.room, request.furniture, grid, opts, rng)
+  const spatialHash = new SolverSpatialHash(Math.max(2, opts.gridCellSize * 10))
 
-  // Phase 2: Simulated annealing (only if we have multiple items)
+  // Phase 1: Greedy placement with backtracking
+  const greedyResult = greedyPlace(request.room, request.furniture, grid, spatialHash, opts, rng)
+  let placements = greedyResult.placements
+
+  // Phase 2: Simulated annealing
   const annealResult = simulatedAnnealing(
-    request.room, request.furniture, placements, grid, opts, weights, rng,
+    request.room, request.furniture, placements, grid, spatialHash, opts, weights, rng,
   )
   placements = annealResult.placements
+
+  // Phase 3: Chair-table grouping
+  // Rebuild grid and spatial hash for final layout
+  const finalGrid = new LayoutGrid(request.room, opts.gridCellSize)
+  const finalSpatialHash = new SolverSpatialHash(Math.max(2, opts.gridCellSize * 10))
+  for (let i = 0; i < placements.length; i++) {
+    const p = placements[i]!
+    finalGrid.occupy(p.x, p.z, p.effectiveWidth / 2, p.effectiveDepth / 2)
+    finalSpatialHash.insertPlacement(i, p)
+  }
+
+  const { chairs, groupings } = placeChairGroups(
+    request.room,
+    request.furniture,
+    placements,
+    finalGrid,
+    finalSpatialHash,
+    { minAisle: opts.minAisleWidth, gridCellSize: opts.gridCellSize },
+  )
+
+  // Merge chair placements
+  if (chairs.length > 0) {
+    placements = [...placements, ...chairs]
+  }
 
   // Validate final layout
   const violations = validateLayout(request.room, placements, opts.minAisleWidth, opts.exitClearance)
@@ -334,11 +498,14 @@ export function solve(request: LayoutRequest): LayoutResult {
     placements,
     scores,
     violations,
+    groupings,
     stats: {
       solveTimeMs: performance.now() - start,
       placedCount: placements.length,
       requestedCount,
       annealingIterations: annealResult.iterations,
+      restarts: annealResult.restarts,
+      backtracks: greedyResult.backtracks,
     },
   }
 }
