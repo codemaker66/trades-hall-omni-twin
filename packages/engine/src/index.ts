@@ -208,3 +208,44 @@ export {
   type NetworkStats,
   type PerformanceSnapshot,
 } from './perf-observatory'
+
+// NVIDIA integrations (T9/T10/T11)
+export {
+  // Cosmos (T9)
+  serializeScene,
+  countByType as cosmosCountByType,
+  estimateCapacity as cosmosEstimateCapacity,
+  formatFurnitureSummary,
+  detectLayoutStyle,
+  MockCosmosClient,
+  createCosmosClient,
+  type CosmosClient,
+  // Omniverse (T10)
+  toOmniverseScene,
+  toOmniverseItem,
+  computeSceneDiff,
+  MockOmniverseClient,
+  createOmniverseClient,
+  type SceneDiffOp,
+  type OmniverseStreamingClient,
+  // ACE (T11)
+  buildConciergeContext,
+  buildSystemPrompt,
+  MockConciergeClient,
+  createConciergeClient,
+  type ConciergeChatClient,
+  // Shared types
+  type JobStatus,
+  type JobResult,
+  type SceneDescription,
+  type CosmosRequest,
+  type CosmosResult,
+  type OmniverseSessionConfig,
+  type OmniverseSession,
+  type OmniverseSceneItem,
+  type OmniverseSceneState,
+  type ConciergeContext,
+  type ConciergeMessage,
+  type ConciergeSession,
+  type ConciergeResponse,
+} from './nvidia'
