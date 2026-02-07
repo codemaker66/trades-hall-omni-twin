@@ -187,3 +187,24 @@ export {
   type ConflictResolution,
   type MergeResult,
 } from './time-travel'
+
+// Performance Observatory
+export {
+  RingBuffer,
+  DEFAULT_WINDOW_SIZE,
+  FRAME_BUDGET_60FPS,
+  DROPPED_FRAME_THRESHOLD,
+  LEAK_THRESHOLD_BYTES,
+  PerformanceCollector,
+  ScopedTimer,
+  FrameTimer,
+  type FrameSample,
+  type MemorySample,
+  type NetworkSample,
+  type SolverSample,
+  type IncrementalSample,
+  type FrameStats,
+  type MemoryStats,
+  type NetworkStats,
+  type PerformanceSnapshot,
+} from './perf-observatory'
