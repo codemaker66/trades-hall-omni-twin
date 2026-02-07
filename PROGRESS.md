@@ -423,6 +423,32 @@
 - [x] JSON snapshot export for documentation/README inclusion
 - [x] 27 tests (RingBuffer 6, ScopedTimer 4, FrameTimer 2, Collector 15)
 
+### T9: NVIDIA Cosmos Integration
+- [x] Scene serializer: countByType, estimateCapacity, formatFurnitureSummary, detectLayoutStyle, serializeScene
+- [x] Layout style detection: theater-style, banquet-style, classroom, mixed
+- [x] Capacity estimation with per-type multipliers (round-table×8, rect-table×6, trestle×10)
+- [x] CosmosClient interface with submit/status/cancel for async job management
+- [x] MockCosmosClient: simulated generation delay, mock video/model URLs
+- [x] ProductionCosmosClient stub: NIM REST API integration point
+- [x] createCosmosClient factory: returns mock without env vars, production with API key
+
+### T10: NVIDIA Omniverse Integration
+- [x] Scene sync: toOmniverseItem, toOmniverseScene with material mapping
+- [x] Material mapping: chair→fabric_burgundy, round-table→wood_oak, stage→wood_dark, etc.
+- [x] Incremental scene diff: computeSceneDiff returns add/remove/update operations
+- [x] OmniverseStreamingClient interface: connect, syncScene, disconnect, getSession
+- [x] MockOmniverseClient: simulated WebRTC streaming sessions with mock URLs
+- [x] createOmniverseClient factory
+
+### T11: NVIDIA ACE Digital Concierge
+- [x] buildConciergeContext: RAG context from venue state (capacity, layout summary, amenities, FAQ)
+- [x] buildSystemPrompt: LLM system prompt with venue details, pricing, FAQ, behavioral instructions
+- [x] ConciergeChatClient interface: createSession, sendMessage, endSession
+- [x] MockConciergeClient: keyword-based responses (capacity, pricing, availability, layout queries)
+- [x] Suggested actions based on message content
+- [x] createConciergeClient factory
+- [x] 31 tests across all three integrations (Cosmos 12, Omniverse 9, ACE 10)
+
 ### T5: Property-Based Testing (fast-check)
 - [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
 - [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
@@ -452,3 +478,4 @@
 | 2026-02-07 | T4 | WebGPU compute shaders for spatial analysis: WGSL shaders + CPU fallbacks for parallel collision detection, sightline analysis with heatmaps, crowd flow evacuation simulation. 25 tests including property-based. Total: 622 tests (284 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
 | 2026-02-07 | T7 | Time-travel debugger with branching timelines: snapshot-based O(1) reconstruction, branch tree with shared ancestry, visual diff (displacement vectors), three-way merge with CRDT semantics, conflict resolution. 43 tests. Total: 665 tests (327 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
 | 2026-02-07 | T8 | Performance observatory: RingBuffer, PerformanceCollector (frame budget, memory leak detection, network efficiency, solver/incremental metrics), ScopedTimer, FrameTimer, JSON export. 27 tests. Total: 692 tests (354 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
+| 2026-02-07 | T9-T11 | NVIDIA integrations: Cosmos scene serializer + mock API (T9), Omniverse scene sync bridge + mock streaming (T10), ACE concierge context builder + mock chat client (T11). Factory pattern: mock clients in dev, production clients with API keys. 31 tests. Total: 723 tests (385 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
