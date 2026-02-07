@@ -354,6 +354,17 @@
 - [x] Metrics: totalRecomputations(), resetCounters(), size, stabilizeCount
 - [x] 19 tests (unit + 4 property-based)
 
+### T1: Constraint Solver for Automatic Layout Generation
+- [x] Types: RoomConfig, FurnitureSpec, Placement, LayoutRequest/Result, Violation
+- [x] LayoutGrid: discretized room (6-inch cells), obstacle/exit zone marking, occupy/vacate/snapshot
+- [x] Hard constraints: no-overlap, bounds, obstacle collision, exit clearance, aisle width
+- [x] Soft objectives: capacity utilization, space coverage, sightline raycasting, symmetry, exit access
+- [x] Greedy placement with MRV heuristic (fixed-zone → wall-adjacent → large items → small)
+- [x] Simulated annealing optimizer (position perturbation + rotation flip with Metropolis acceptance)
+- [x] Deterministic PRNG (Mulberry32) for reproducible results
+- [x] Public API: solve(), validate(), score()
+- [x] 38 tests (32 unit + 6 property-based: hard constraint satisfaction, bounds, overlap, capacity, scores, determinism)
+
 ### T5: Property-Based Testing (fast-check)
 - [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
 - [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
@@ -377,3 +388,4 @@
 | 2026-02-06 | Phase 5 | Yjs collaboration infrastructure (Y.Doc model, bidirectional Yjs↔Zustand bridge with echo suppression, presence/awareness system, y-websocket provider, y-indexeddb offline persistence, ConnectionStatusIndicator UI), 30 tests |
 | 2026-02-07 | Phase 6 | Accessibility (prefers-reduced-motion, eslint-plugin-jsx-a11y, keyboard nav hook, ARIA live regions, screen reader announcements), auto-save with indicator, security headers (CSP/HSTS/XSS), Modal useId fix, 25 tests |
 | 2026-02-07 | T2+T5 | Incremental computation framework (IncrementalGraph with height-based topological scheduling, cutoff propagation, batch stabilization, observers). Property-based tests (fast-check): 19 incremental tests + 20 property tests across projector, spatial hash, AABB collision, and snapping systems. Total: 475 tests (221 engine + 29 shared + 225 web). |
+| 2026-02-07 | T1 | Constraint solver for automatic layout generation: grid discretization, hard constraints (overlap, bounds, obstacle, exit clearance, aisle width), soft objectives (sightlines, symmetry, exit access), greedy MRV placement + simulated annealing optimizer. 38 tests. Total: 513 tests (259 engine + 29 shared + 225 web). |
