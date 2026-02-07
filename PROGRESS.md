@@ -365,6 +365,18 @@
 - [x] Public API: solve(), validate(), score()
 - [x] 38 tests (32 unit + 6 property-based: hard constraint satisfaction, bounds, overlap, capacity, scores, determinism)
 
+### T6: Custom Binary Protocol for Real-Time Sync
+- [x] Wire protocol types: 7 op types (move, rotate, place, remove, scale, batch_move, batch_rotate)
+- [x] HLC (Hybrid Logical Clock): tick/receive/compare, 8-byte packed encoding (48-bit wall + 16-bit counter)
+- [x] Binary encoder: WireOp → ArrayBuffer via DataView (little-endian, 25 bytes/move vs ~180 JSON)
+- [x] Binary decoder: ArrayBuffer → WireOp with offset cursor for streaming
+- [x] Batch framing: multi-op frames with [4B length][2B count][ops...] header
+- [x] Delta compression: DeltaCompressor with per-object tracking, int16 fixed-point (1mm precision)
+- [x] Deadzone filtering: suppress sub-0.5mm position changes during drag
+- [x] Furniture type index mapping (0-6, matches ECS FurnitureTag.type)
+- [x] 51 tests (45 unit + 7 property-based + 6 benchmarks)
+- [x] Benchmark: ~4.8x size reduction, 24% delta compression savings, 6-byte batch overhead
+
 ### T5: Property-Based Testing (fast-check)
 - [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
 - [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
@@ -389,3 +401,4 @@
 | 2026-02-07 | Phase 6 | Accessibility (prefers-reduced-motion, eslint-plugin-jsx-a11y, keyboard nav hook, ARIA live regions, screen reader announcements), auto-save with indicator, security headers (CSP/HSTS/XSS), Modal useId fix, 25 tests |
 | 2026-02-07 | T2+T5 | Incremental computation framework (IncrementalGraph with height-based topological scheduling, cutoff propagation, batch stabilization, observers). Property-based tests (fast-check): 19 incremental tests + 20 property tests across projector, spatial hash, AABB collision, and snapping systems. Total: 475 tests (221 engine + 29 shared + 225 web). |
 | 2026-02-07 | T1 | Constraint solver for automatic layout generation: grid discretization, hard constraints (overlap, bounds, obstacle, exit clearance, aisle width), soft objectives (sightlines, symmetry, exit access), greedy MRV placement + simulated annealing optimizer. 38 tests. Total: 513 tests (259 engine + 29 shared + 225 web). |
+| 2026-02-07 | T6 | Custom binary wire protocol: HLC clock, binary encoder/decoder (DataView), batch framing, delta compression (int16 fixed-point), deadzone filtering. 51 tests. Total: 564 tests (259 engine + 29 shared + 225 web + 51 wire-protocol). |
