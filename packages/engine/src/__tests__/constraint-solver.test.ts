@@ -20,6 +20,7 @@ import {
   type Placement,
   type LayoutRequest,
   type Exit,
+  type SolverFurnitureType,
 } from '../constraint-solver'
 
 // ─── Test Helpers ───────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ function makeRoom(width = 20, depth = 15): RoomConfig {
   }
 }
 
-function makePlacement(x: number, z: number, w: number, d: number, type = 'chair' as const, specIndex = 0, instanceIndex = 0): Placement {
+function makePlacement(x: number, z: number, w: number, d: number, type: SolverFurnitureType = 'chair', specIndex = 0, instanceIndex = 0): Placement {
   return { specIndex, instanceIndex, x, z, rotation: 0, type, effectiveWidth: w, effectiveDepth: d }
 }
 

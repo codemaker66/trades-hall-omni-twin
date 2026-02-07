@@ -133,3 +133,21 @@ export {
   type Rect,
   type SolverFurnitureType,
 } from './constraint-solver'
+
+// GPU compute spatial analysis (import from '@omni-twin/engine/gpu-compute' for full API)
+export {
+  detectCollisionsCPU as gpuDetectCollisionsCPU,
+  analyzeSightlinesCPU as gpuAnalyzeSightlinesCPU,
+  simulateCrowdFlowCPU as gpuSimulateCrowdFlowCPU,
+  COLLISION_SHADER,
+  SIGHTLINE_SHADER,
+  CROWD_FLOW_SHADER,
+  type AABB2D,
+  type AnalysisItem,
+  type RoomGeometry as GpuRoomGeometry,
+  type CollisionResult as GpuCollisionResult,
+  type SightlineResult,
+  type CrowdFlowResult,
+  type CrowdFlowParams,
+  type GpuCapabilities,
+} from './gpu-compute'
