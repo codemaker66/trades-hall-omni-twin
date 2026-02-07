@@ -341,6 +341,30 @@
 
 ---
 
+## Transcendent Engineering Additions
+
+### T2: Incremental Computation Framework
+- [x] `IncrementalGraph` class with input/derived/observer nodes
+- [x] Height-based topological scheduling (dirty nodes processed lowest-first)
+- [x] Change propagation with cutoff (if derived produces same value, stop)
+- [x] Dynamic dirty propagation (not recursive upfront — enables proper cutoff)
+- [x] Batch stabilization (set multiple inputs, stabilize once)
+- [x] Observer nodes with side-effect callbacks
+- [x] Custom equality functions for structural comparison
+- [x] Metrics: totalRecomputations(), resetCounters(), size, stabilizeCount
+- [x] 19 tests (unit + 4 property-based)
+
+### T5: Property-Based Testing (fast-check)
+- [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
+- [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
+- [x] SpatialHash: insert-query consistency, negative coordinates, removal completeness, size tracking, cell boundaries (5 properties)
+- [x] AABB collision: symmetry, self-overlap, separation detection, containment (4 properties)
+- [x] Snapping: grid idempotency, proximity bounds, alignment, height idempotency, K-nearest ordering (5 properties)
+- [x] ~2,400 generated test cases total across all properties
+- [x] 20 property-based test entries
+
+---
+
 ## Session Log
 
 | Date | Phase | Work Done |
@@ -352,3 +376,4 @@
 | 2026-02-06 | Phase 4 | 2D/3D toggle view, coordinate bridge (feet↔meters), 3D preview with InstancedMesh, camera presets with animated transitions, lazy-loaded Three.js, 26 tests |
 | 2026-02-06 | Phase 5 | Yjs collaboration infrastructure (Y.Doc model, bidirectional Yjs↔Zustand bridge with echo suppression, presence/awareness system, y-websocket provider, y-indexeddb offline persistence, ConnectionStatusIndicator UI), 30 tests |
 | 2026-02-07 | Phase 6 | Accessibility (prefers-reduced-motion, eslint-plugin-jsx-a11y, keyboard nav hook, ARIA live regions, screen reader announcements), auto-save with indicator, security headers (CSP/HSTS/XSS), Modal useId fix, 25 tests |
+| 2026-02-07 | T2+T5 | Incremental computation framework (IncrementalGraph with height-based topological scheduling, cutoff propagation, batch stabilization, observers). Property-based tests (fast-check): 19 incremental tests + 20 property tests across projector, spatial hash, AABB collision, and snapping systems. Total: 475 tests (221 engine + 29 shared + 225 web). |
