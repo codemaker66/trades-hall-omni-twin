@@ -168,44 +168,52 @@ export class IncrementalGraph {
    * Propagate all pending changes through the graph.
    * Processes dirty nodes in height order (lowest first = topological).
    * Uses cutoff: if a derived node produces the same value, its dependents are NOT dirtied.
+   * Dirty marks propagate dynamically — only when a node actually changes value.
    */
   stabilize(): void {
     this._stabilizeCount++
 
-    // Sort dirty nodes by height (ascending) for topological processing
-    const sortedDirty = Array.from(this.dirtySet).sort((a, b) => a.height - b.height)
+    // Process dirty nodes in height order, adding new dirty nodes dynamically
+    while (this.dirtySet.size > 0) {
+      // Find the lowest-height dirty node (topological order)
+      let minNode: AnyNode | null = null
+      for (const node of this.dirtySet) {
+        if (!minNode || node.height < minNode.height) {
+          minNode = node
+        }
+      }
+      if (!minNode) break
 
-    for (const node of sortedDirty) {
-      if (!node.dirty) continue // may have been un-dirtied by cutoff
+      this.dirtySet.delete(minNode)
+      minNode.dirty = false
 
-      if (node.kind === 'derived' || node.kind === 'observer') {
-        const derived = node as DerivedNode<unknown> | ObserverNode<unknown>
+      if (minNode.kind === 'derived' || minNode.kind === 'observer') {
+        const derived = minNode as DerivedNode<unknown> | ObserverNode<unknown>
         const args = derived.dependencies.map((d) => (d as BaseNode & { value: unknown }).value)
         const newValue = derived.compute(...args)
         derived.recomputeCount++
 
         if (derived.equals(derived.value, newValue)) {
-          // Cutoff: same value, don't propagate further
-          derived.dirty = false
-          this.dirtySet.delete(node)
+          // Cutoff: same value, don't propagate to dependents
           continue
         }
 
         derived.value = newValue
-        derived.dirty = false
-        this.dirtySet.delete(node)
 
         // Trigger observer effect
-        if (node.kind === 'observer') {
-          ;(node as ObserverNode<unknown>).effect(newValue)
+        if (minNode.kind === 'observer') {
+          ;(minNode as ObserverNode<unknown>).effect(newValue)
         }
 
-        // Mark dependents dirty (they need to recompute with the new value)
-        this.markDependentsDirty(derived)
+        // Mark direct dependents dirty — they need to recompute
+        for (const dep of derived.dependents) {
+          if (!dep.dirty) {
+            dep.dirty = true
+            this.dirtySet.add(dep as AnyNode)
+          }
+        }
       }
     }
-
-    this.dirtySet.clear()
   }
 
   /**
@@ -242,8 +250,6 @@ export class IncrementalGraph {
       if (!dep.dirty) {
         dep.dirty = true
         this.dirtySet.add(dep as AnyNode)
-        // Recursively mark transitive dependents
-        this.markDependentsDirty(dep)
       }
     }
   }
