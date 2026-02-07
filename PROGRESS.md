@@ -377,6 +377,17 @@
 - [x] 51 tests (45 unit + 7 property-based + 6 benchmarks)
 - [x] Benchmark: ~4.8x size reduction, 24% delta compression savings, 6-byte batch overhead
 
+### T3: Custom Spatial CRDT for Collaborative Editing
+- [x] Operation types: add, remove, move (displacement), rotate (delta), scale (delta)
+- [x] Vec3 math: add, equality with epsilon, constants (ZERO, ONE)
+- [x] State reconstruction: deterministic from op set (base from AddOp + sum of deltas)
+- [x] Merge function: set union of op logs (commutative, associative, idempotent by construction)
+- [x] SpatialDocument: op log + incremental state cache + per-object op tracking
+- [x] Add-wins semantics: concurrent add/remove resolved by HLC (add wins on tie)
+- [x] Delta sync protocol: state vector exchange, getMissingOps, fullSync
+- [x] Op ID generation: replicaId:counter format with parseOpId
+- [x] 33 tests (25 unit + 8 property-based CRDT correctness proofs)
+
 ### T5: Property-Based Testing (fast-check)
 - [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
 - [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
@@ -402,3 +413,4 @@
 | 2026-02-07 | T2+T5 | Incremental computation framework (IncrementalGraph with height-based topological scheduling, cutoff propagation, batch stabilization, observers). Property-based tests (fast-check): 19 incremental tests + 20 property tests across projector, spatial hash, AABB collision, and snapping systems. Total: 475 tests (221 engine + 29 shared + 225 web). |
 | 2026-02-07 | T1 | Constraint solver for automatic layout generation: grid discretization, hard constraints (overlap, bounds, obstacle, exit clearance, aisle width), soft objectives (sightlines, symmetry, exit access), greedy MRV placement + simulated annealing optimizer. 38 tests. Total: 513 tests (259 engine + 29 shared + 225 web). |
 | 2026-02-07 | T6 | Custom binary wire protocol: HLC clock, binary encoder/decoder (DataView), batch framing, delta compression (int16 fixed-point), deadzone filtering. 51 tests. Total: 564 tests (259 engine + 29 shared + 225 web + 51 wire-protocol). |
+| 2026-02-07 | T3 | Spatial intent CRDT: displacement-based merge (both concurrent intents preserved), SpatialDocument with op log + incremental cache, delta sync protocol, add-wins semantics. 33 tests including 8 property-based CRDT proofs (SEC, commutativity, associativity, idempotency, convergence). Total: 597 tests. |
