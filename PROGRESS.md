@@ -398,6 +398,20 @@
 - [x] Exported from engine index.ts with aliased names (gpuDetectCollisionsCPU, gpuAnalyzeSightlinesCPU, gpuSimulateCrowdFlowCPU)
 - [x] 25 tests (collision 5, sightlines 6, crowd flow 6, WGSL validation 3, property-based 5)
 
+### T7: Time-Travel Debugger with Branching Timelines
+- [x] Types: Timeline, Branch, TimelineSnapshot, EventMarker, ItemDiff, StateDiff, MergeConflict, MergeResult
+- [x] Timeline creation with root branch and periodic snapshots (SNAPSHOT_INTERVAL = 50)
+- [x] Event classification: add, remove, move, rotate, scale, group, other
+- [x] Binary search for nearest snapshot, O(SNAPSHOT_INTERVAL) state reconstruction
+- [x] Append events with cursor tracking, seek to any point, future truncation
+- [x] Branch creation at cursor, branch switching, shared ancestry (no event duplication)
+- [x] Visual diff: compare two states → classify items as added/removed/moved/modified/unchanged
+- [x] Displacement vectors for moved items, changedOnly/filterByStatus helpers
+- [x] Three-way merge: base→A and base→B diffs, auto-merge non-conflicting, CRDT displacement sum for concurrent moves
+- [x] Conflict detection: both-moved, both-modified, move-remove, modify-remove
+- [x] Conflict resolution: use-a, use-b, use-base, merge-displacements
+- [x] 43 tests (35 unit + 4 property-based + 4 integration)
+
 ### T5: Property-Based Testing (fast-check)
 - [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
 - [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
@@ -425,3 +439,4 @@
 | 2026-02-07 | T6 | Custom binary wire protocol: HLC clock, binary encoder/decoder (DataView), batch framing, delta compression (int16 fixed-point), deadzone filtering. 51 tests. Total: 564 tests (259 engine + 29 shared + 225 web + 51 wire-protocol). |
 | 2026-02-07 | T3 | Spatial intent CRDT: displacement-based merge (both concurrent intents preserved), SpatialDocument with op log + incremental cache, delta sync protocol, add-wins semantics. 33 tests including 8 property-based CRDT proofs (SEC, commutativity, associativity, idempotency, convergence). Total: 597 tests. |
 | 2026-02-07 | T4 | WebGPU compute shaders for spatial analysis: WGSL shaders + CPU fallbacks for parallel collision detection, sightline analysis with heatmaps, crowd flow evacuation simulation. 25 tests including property-based. Total: 622 tests (284 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
+| 2026-02-07 | T7 | Time-travel debugger with branching timelines: snapshot-based O(1) reconstruction, branch tree with shared ancestry, visual diff (displacement vectors), three-way merge with CRDT semantics, conflict resolution. 43 tests. Total: 665 tests (327 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
