@@ -1,7 +1,7 @@
 [project]
 name = "omni-twin-ml-api"
 version = "0.1.0"
-description = "ML API for Optimal Transport venue-event matching"
+description = "ML API for Optimal Transport and Topological Data Analysis"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
@@ -9,6 +9,15 @@ dependencies = [
     "POT>=0.9.5",
     "numpy>=1.26.0",
     "scipy>=1.14.0",
+    # TDA dependencies
+    "ripser>=0.6.0",
+    "persim>=0.3.0",
+    "gower>=0.1.2",
+    "gudhi>=3.9.0",
+    "keplerMapper>=2.0.0",
+    "scikit-learn>=1.4.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.8.0",
 ]
 
 [project.optional-dependencies]
