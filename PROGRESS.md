@@ -412,6 +412,17 @@
 - [x] Conflict resolution: use-a, use-b, use-base, merge-displacements
 - [x] 43 tests (35 unit + 4 property-based + 4 integration)
 
+### T8: Performance Observatory
+- [x] RingBuffer: generic circular buffer with O(1) push, indexed access, iteration
+- [x] PerformanceCollector: rolling window collection for frames, memory, network, solver, incremental metrics
+- [x] Frame budget analysis: avgFps, minFps, maxFps, p99FrameMs, per-phase averages, dropped frame count
+- [x] Memory analysis: current/peak JS heap, GPU memory, geometry/texture counts, leak detection (first-third vs last-third comparison)
+- [x] Network analysis: ops/sec, bytes/sec, compression ratio, latency avg + p99
+- [x] ScopedTimer: named phase measurement with auto-end, accumulation, reset
+- [x] FrameTimer: per-frame timing producing FrameSample (render, physics, crdt, ui, idle)
+- [x] JSON snapshot export for documentation/README inclusion
+- [x] 27 tests (RingBuffer 6, ScopedTimer 4, FrameTimer 2, Collector 15)
+
 ### T5: Property-Based Testing (fast-check)
 - [x] Incremental framework: consistency, idempotency, minimality, commutativity (4 properties)
 - [x] Projector: immutability, version monotonicity, place-remove roundtrip, move idempotency, group-dissolve roundtrip, projectState equivalence (6 properties)
@@ -440,3 +451,4 @@
 | 2026-02-07 | T3 | Spatial intent CRDT: displacement-based merge (both concurrent intents preserved), SpatialDocument with op log + incremental cache, delta sync protocol, add-wins semantics. 33 tests including 8 property-based CRDT proofs (SEC, commutativity, associativity, idempotency, convergence). Total: 597 tests. |
 | 2026-02-07 | T4 | WebGPU compute shaders for spatial analysis: WGSL shaders + CPU fallbacks for parallel collision detection, sightline analysis with heatmaps, crowd flow evacuation simulation. 25 tests including property-based. Total: 622 tests (284 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
 | 2026-02-07 | T7 | Time-travel debugger with branching timelines: snapshot-based O(1) reconstruction, branch tree with shared ancestry, visual diff (displacement vectors), three-way merge with CRDT semantics, conflict resolution. 43 tests. Total: 665 tests (327 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
+| 2026-02-07 | T8 | Performance observatory: RingBuffer, PerformanceCollector (frame budget, memory leak detection, network efficiency, solver/incremental metrics), ScopedTimer, FrameTimer, JSON export. 27 tests. Total: 692 tests (354 engine + 29 shared + 225 web + 51 wire-protocol + 33 spatial-crdt). |
