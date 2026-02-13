@@ -5,6 +5,25 @@
 
 ---
 
+## Command Completion Log Format
+
+For command-spec sessions (`docs/commands/**`), append an entry using this template:
+
+```
+### Command <ID> - <Title>
+- Date: YYYY-MM-DD
+- Track: <track>
+- Files implemented: <paths>
+- Tests added/updated: <tests>
+- Verification run: <commands + pass/fail>
+- Gotchas for next command: <notes>
+- Deviations from command spec: <none or explicit rationale>
+```
+
+Session boundary rule: update this section, create commit, and stop.
+
+---
+
 ## Pre-Flight: Codebase Assessment
 
 - [x] Inventory existing codebase
