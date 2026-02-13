@@ -1,5 +1,17 @@
 # TECHNIQUE_11_COMPUTER_VISION_3D_RECONSTRUCTION.md — Computer Vision & 3D for Venue Digital Twins
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/computer-vision/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+CV-N maps to CV-N.
+Integration checkpoints use IDs `CV-INT-1`, `CV-INT-2`, and `CV-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
