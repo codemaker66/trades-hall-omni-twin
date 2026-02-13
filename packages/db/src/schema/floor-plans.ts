@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, real, boolean, jsonb, timestamp } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, integer, real, boolean, jsonb, timestamp, index } from 'drizzle-orm/pg-core'
 import { users } from './users'
 import { venues } from './venues'
 
@@ -17,7 +17,9 @@ export const floorPlans = pgTable('floor_plans', {
   createdBy: uuid('created_by').references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('floor_plans_venue_id_idx').on(table.venueId),
+])
 
 export const furnitureCatalog = pgTable('furniture_catalog', {
   id: uuid('id').primaryKey().defaultRandom(),

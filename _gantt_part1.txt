@@ -1,0 +1,60 @@
+'use client'
+
+import { useMemo, useState, useCallback, type MouseEvent } from 'react'
+
+/* =========================================================================
+   Schedule Gantt Chart
+
+   Pure SVG Gantt visualization for optimized event schedules.
+   Y-axis = rooms, X-axis = time (hours), colored bars = events.
+   Supports multi-day views, conflict detection, and capacity indicators.
+   ========================================================================= */
+
+export interface ScheduleEvent {
+  id: string
+  name: string
+  roomId: string
+  roomName: string
+  startTime: number  // minutes from midnight
+  endTime: number
+  day: number
+  guests: number
+  color?: string
+}
+
+export interface ScheduleGanttProps {
+  events: ScheduleEvent[]
+  /** Room definitions for y-axis */
+  rooms: Array<{ id: string; name: string; capacity: number }>
+  /** Time range */
+  startHour?: number  // default 8
+  endHour?: number    // default 22
+  /** Days to show */
+  days?: number       // default 1
+  /** Highlighted event ID */
+  highlightedId?: string
+  onEventClick?: (id: string) => void
+  width?: number
+  height?: number
+  title?: string
+}
+
+/* --- Constants ---------------------------------------------------------- */
+
+const PAD = { top: 40, right: 24, bottom: 32, left: 160 }
+const ROW_HEIGHT = 48
+const DAY_HEADER_HEIGHT = 28
+const CAPACITY_BAR_HEIGHT = 4
+
+const PALETTE = [
+  '#b38728', // gold
+  '#6366f1', // indigo
+  '#ef5350', // red
+  '#66bb6a', // green
+  '#4fc3f7', // cyan
+  '#f472b6', // pink
+  '#ffb74d', // amber
+  '#8b7bff', // purple
+  '#26a69a', // teal
+  '#ff7043', // deep-orange
+]

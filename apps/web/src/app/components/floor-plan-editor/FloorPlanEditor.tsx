@@ -7,6 +7,7 @@ import { CatalogSidebar } from './CatalogSidebar'
 import { CapacityWarning } from './CapacityWarning'
 import { useEditorKeyboard } from './useEditorKeyboard'
 import { useAutoSave } from './useAutoSave'
+import { useServerSync } from './useServerSync'
 import { SaveIndicator } from './SaveIndicator'
 
 // Konva must be client-only (uses window)
@@ -20,7 +21,12 @@ const Scene3DPreview = dynamic(
 
 type ViewMode = '2d' | '3d'
 
-export function FloorPlanEditor() {
+interface FloorPlanEditorProps {
+  venueId?: string
+  planId?: string
+}
+
+export function FloorPlanEditor({ venueId, planId }: FloorPlanEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 800, height: 600 })
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
@@ -30,6 +36,9 @@ export function FloorPlanEditor() {
 
   // Auto-save to localStorage with debounce
   const { status: saveStatus } = useAutoSave()
+
+  // Server sync (only when venueId + planId are provided)
+  const { serverStatus } = useServerSync(venueId, planId)
 
   useEffect(() => {
     const el = containerRef.current
@@ -91,7 +100,7 @@ export function FloorPlanEditor() {
 
           {/* Save indicator */}
           <div className="px-3">
-            <SaveIndicator status={saveStatus} />
+            <SaveIndicator status={saveStatus} serverStatus={serverStatus} />
           </div>
         </div>
 

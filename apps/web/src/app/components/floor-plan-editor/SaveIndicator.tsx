@@ -9,15 +9,38 @@ const config: Record<SaveStatus, { label: string; dot: string }> = {
   error: { label: 'Save failed', dot: 'bg-danger-50' },
 }
 
-export function SaveIndicator({ status }: { status: SaveStatus }) {
-  if (status === 'idle') return null
+const serverConfig: Record<SaveStatus, { label: string; dot: string }> = {
+  idle: { label: '', dot: '' },
+  saving: { label: 'Syncing...', dot: 'bg-indigo-50 animate-pulse' },
+  saved: { label: 'Synced', dot: 'bg-success-50' },
+  error: { label: 'Sync failed', dot: 'bg-danger-50' },
+}
 
-  const { label, dot } = config[status]
+interface SaveIndicatorProps {
+  status: SaveStatus
+  serverStatus?: SaveStatus
+}
+
+export function SaveIndicator({ status, serverStatus }: SaveIndicatorProps) {
+  const showLocal = status !== 'idle'
+  const showServer = serverStatus && serverStatus !== 'idle'
+
+  if (!showLocal && !showServer) return null
 
   return (
-    <div className="flex items-center gap-1.5 text-xs text-surface-60" aria-live="polite">
-      <div className={`w-1.5 h-1.5 rounded-full ${dot}`} />
-      <span>{label}</span>
+    <div className="flex items-center gap-3 text-xs text-surface-60" aria-live="polite">
+      {showLocal && (
+        <div className="flex items-center gap-1.5">
+          <div className={`w-1.5 h-1.5 rounded-full ${config[status].dot}`} />
+          <span>{config[status].label}</span>
+        </div>
+      )}
+      {showServer && (
+        <div className="flex items-center gap-1.5">
+          <div className={`w-1.5 h-1.5 rounded-full ${serverConfig[serverStatus].dot}`} />
+          <span>{serverConfig[serverStatus].label}</span>
+        </div>
+      )}
     </div>
   )
 }

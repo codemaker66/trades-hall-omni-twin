@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, real, jsonb, timestamp } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, integer, real, jsonb, timestamp, index } from 'drizzle-orm/pg-core'
 import { users } from './users'
 import { venues } from './venues'
 import { floorPlans } from './floor-plans'
@@ -32,7 +32,9 @@ export const occasions = pgTable('occasions', {
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('occasions_venue_id_idx').on(table.venueId),
+])
 
 export const proposals = pgTable('proposals', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -52,7 +54,9 @@ export const proposals = pgTable('proposals', {
   viewedAt: timestamp('viewed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('proposals_occasion_id_idx').on(table.occasionId),
+])
 
 export const bookings = pgTable('bookings', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -75,4 +79,6 @@ export const bookings = pgTable('bookings', {
   signedAt: timestamp('signed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('bookings_occasion_id_idx').on(table.occasionId),
+])

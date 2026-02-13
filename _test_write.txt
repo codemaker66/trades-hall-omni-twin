@@ -1,0 +1,23 @@
+'use client'
+
+import { useMemo, useState, useCallback, type MouseEvent } from 'react'
+
+/* =========================================================================
+   Schedule Gantt Chart
+
+   Pure SVG Gantt visualization for optimized event schedules.
+   Y-axis = rooms, X-axis = time (hours), colored bars = events.
+   Supports multi-day views, conflict detection, and capacity indicators.
+   ========================================================================= */
+
+export interface ScheduleEvent {
+  id: string
+  name: string
+  roomId: string
+  roomName: string
+  startTime: number  // minutes from midnight
+  endTime: number
+  day: number
+  guests: number
+  color?: string
+}

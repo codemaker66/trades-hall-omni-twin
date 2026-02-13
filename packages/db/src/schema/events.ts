@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, jsonb, timestamp, bigserial, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, integer, jsonb, timestamp, bigserial, uniqueIndex, index } from 'drizzle-orm/pg-core'
 import { users } from './users'
 
 /** Append-only event store for venue domain events. */
@@ -25,4 +25,6 @@ export const venueSnapshots = pgTable('venue_snapshots', {
   version: integer('version').notNull(),
   state: jsonb('state').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('venue_snapshots_venue_version_idx').on(table.venueId, table.version),
+])

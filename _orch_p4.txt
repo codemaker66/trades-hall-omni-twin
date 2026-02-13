@@ -1,0 +1,53 @@
+
+  // -----------------------------------------------------------------------
+  // Layer 4 - Diversity Sampling
+  // -----------------------------------------------------------------------
+
+  /**
+   * Sample alternative layouts via MCMC Metropolis-Hastings.
+   *
+   * Runs MH at a fixed temperature to explore the energy landscape,
+   * producing a gallery of diverse layout options. Thinning and burn-in
+   * ensure samples are decorrelated.
+   */
+  async sampleAlternatives(
+    layout: Layout,
+    weights: LayoutWeights,
+    n: number,
+  ): Promise<Layout[]> {
+    const { items, room } = layout
+
+    if (items.length === 0) {
+      return []
+    }
+
+    const initialState = itemsToState(items)
+
+    const energyFn = (state: Float64Array): number =>
+      computeLayoutEnergy(state, room, weights, 0)
+
+    const neighborFn = (state: Float64Array, rng: PRNG): Float64Array =>
+      generateLayoutNeighbor(state, room, rng)
+
+    const mcmcResult = sampleLayoutsMH(initialState, {
+      temperature: MCMC_TEMPERATURE,
+      nSamples: n,
+      thin: MCMC_THIN,
+      burnIn: MCMC_BURN_IN,
+      seed: DEFAULT_SEED,
+    }, energyFn, neighborFn)
+
+    // Convert each sample state back to a Layout
+    const alternatives: Layout[] = []
+    for (let i = 0; i < mcmcResult.samples.length; i++) {
+      const sampleState = mcmcResult.samples[i]!
+      const sampleEnergy = mcmcResult.energies[i]!
+      alternatives.push({
+        items: stateToItems(sampleState, items),
+        room,
+        energy: sampleEnergy,
+      })
+    }
+
+    return alternatives
+  }

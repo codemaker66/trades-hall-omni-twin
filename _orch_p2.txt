@@ -1,0 +1,82 @@
+
+// ---------------------------------------------------------------------------
+// Description parsing helpers
+// ---------------------------------------------------------------------------
+
+/** Style keywords to detect from natural-language descriptions */
+const STYLE_KEYWORDS: ReadonlyArray<string> = [
+  'banquet', 'theater', 'classroom', 'cocktail', 'conference',
+  'boardroom', 'u-shape', 'cabaret', 'reception', 'workshop',
+]
+
+/**
+ * Extract a style keyword from a free-form description string.
+ * Returns the first matching keyword, or 'banquet' as default.
+ */
+function parseStyle(description: string): string {
+  const lower = description.toLowerCase()
+  for (const keyword of STYLE_KEYWORDS) {
+    if (lower.includes(keyword)) {
+      return keyword
+    }
+  }
+  return 'banquet'
+}
+
+/**
+ * Extract a target capacity from a free-form description string.
+ * Looks for patterns like "100 guests", "capacity 200", "for 50 people".
+ * Returns 100 as a sensible default if no number is found.
+ */
+function parseCapacity(description: string): number {
+  const patterns = [
+    /(d+)s*(?:guests?|people|attendees?|pax|seats?)/i,
+    /(?:capacity|seating|accommodate)s*:?s*(d+)/i,
+    /(?:for|ups+to)s+(d+)/i,
+  ]
+  for (const pattern of patterns) {
+    const match = description.match(pattern)
+    if (match?.[1]) {
+      const parsed = parseInt(match[1], 10)
+      if (parsed > 0) return parsed
+    }
+  }
+  return 100
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline constants
+// ---------------------------------------------------------------------------
+
+/** Number of replicas for Parallel Tempering in Layer 3 */
+const PT_REPLICAS = 8
+
+/** Minimum temperature for Parallel Tempering */
+const PT_T_MIN = 0.01
+
+/** Maximum temperature for Parallel Tempering */
+const PT_T_MAX = 100
+
+/** SA sweeps between swap attempts in PT */
+const PT_SWEEPS_PER_SWAP = 50
+
+/** Total swap attempts in PT */
+const PT_TOTAL_SWAPS = 500
+
+/** Fixed temperature for MCMC diversity sampling (Layer 4) */
+const MCMC_TEMPERATURE = 1.0
+
+/** MCMC thinning factor */
+const MCMC_THIN = 5
+
+/** MCMC burn-in iterations */
+const MCMC_BURN_IN = 200
+
+/** NSGA-II population size (Layer 5) */
+const NSGA2_POPULATION = 50
+
+/** NSGA-II generations (Layer 5) */
+const NSGA2_GENERATIONS = 100
+
+/** Default random seed for reproducibility */
+const DEFAULT_SEED = 42

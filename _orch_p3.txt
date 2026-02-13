@@ -1,0 +1,102 @@
+
+// ---------------------------------------------------------------------------
+// Pipeline implementation
+// ---------------------------------------------------------------------------
+
+export class VenueSolverPipeline implements SolverPipeline {
+  // -----------------------------------------------------------------------
+  // Layer 1 - Initial Generation
+  // -----------------------------------------------------------------------
+
+  /**
+   * Generate an initial layout from a natural-language description.
+   *
+   * First attempts LLM-based generation (which may fail if no API endpoint
+   * is configured). Falls back to template-based generation using the
+   * detected style and capacity.
+   */
+  async generateInitial(description: string, room: RoomBoundary): Promise<Layout> {
+    const style = parseStyle(description)
+    const capacity = parseCapacity(description)
+
+    // Attempt LLM-based generation; fall back to template on failure
+    try {
+      const layout = await generateLayoutLLM(description, room)
+      return layout
+    } catch {
+      // LLM unavailable - use deterministic template generation
+      return generateTemplateLayout(style, room, capacity)
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Layer 2 - Hard Constraint Enforcement
+  // -----------------------------------------------------------------------
+
+  /**
+   * Solve event-room-timeslot assignment using Mixed Integer Programming.
+   *
+   * Enforces hard constraints:
+   *   - Each event assigned to exactly one room and timeslot
+   *   - No room double-booking within the same timeslot
+   *   - Room capacity must accommodate event guest count
+   */
+  async scheduleEvents(
+    events: EventSpec[],
+    rooms: RoomSpec[],
+    timeslots: TimeslotSpec[],
+  ): Promise<ScheduleResult> {
+    return solveScheduleMIP(events, rooms, timeslots)
+  }
+
+  // -----------------------------------------------------------------------
+  // Layer 3 - Soft Optimization
+  // -----------------------------------------------------------------------
+
+  /**
+   * Optimize a layout using Parallel Tempering.
+   *
+   * Converts furniture items to a continuous state vector, runs PT with
+   * 8 replicas at geometrically spaced temperatures, then converts the
+   * best solution back to FurnitureItem[].
+   *
+   * Minimizes a weighted sum of overlap, aisle, egress, sightline,
+   * capacity, ADA, aesthetic, and service penalties.
+   */
+  async optimizeLayout(
+    layout: Layout,
+    weights: LayoutWeights,
+    targetCapacity: number,
+  ): Promise<Layout> {
+    const { items, room } = layout
+
+    if (items.length === 0) {
+      return { items: [], room, energy: 0 }
+    }
+
+    const initialState = itemsToState(items)
+
+    // Build closures that capture the room boundary and weights
+    const energyFn = (state: Float64Array): number =>
+      computeLayoutEnergy(state, room, weights, targetCapacity)
+
+    const neighborFn = (state: Float64Array, rng: PRNG): Float64Array =>
+      generateLayoutNeighbor(state, room, rng)
+
+    const result = parallelTempering(initialState, {
+      nReplicas: PT_REPLICAS,
+      tMin: PT_T_MIN,
+      tMax: PT_T_MAX,
+      spacing: TempSpacing.Geometric,
+      sweepsPerSwap: PT_SWEEPS_PER_SWAP,
+      totalSwaps: PT_TOTAL_SWAPS,
+      seed: DEFAULT_SEED,
+    }, energyFn, neighborFn)
+
+    const optimizedItems = stateToItems(result.bestState, items)
+    return {
+      items: optimizedItems,
+      room,
+      energy: result.bestEnergy,
+    }
+  }

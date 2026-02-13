@@ -1,0 +1,13 @@
+/**
+ * PS-12: Venue Solver Pipeline Orchestrator
+ *
+ * Five-layer pipeline for venue planning:
+ *
+ *   Layer 1 - Initial Generation:   LLM or template-based layout creation
+ *   Layer 2 - Hard Constraints:     MIP scheduler for event->room->timeslot
+ *   Layer 3 - Soft Optimization:    Parallel Tempering to minimize layout energy
+ *   Layer 4 - Diversity Sampling:   MCMC Metropolis-Hastings for layout gallery
+ *   Layer 5 - Multi-Objective:      NSGA-II Pareto front (cost / flow / compliance)
+ *
+ * Each layer can be invoked independently or chained via `runFullPipeline`.
+ */

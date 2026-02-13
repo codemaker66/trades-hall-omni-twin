@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, real, jsonb, timestamp } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, integer, real, jsonb, timestamp, index } from 'drizzle-orm/pg-core'
 import { users } from './users'
 
 export const venues = pgTable('venues', {
@@ -37,4 +37,6 @@ export const venuePermissions = pgTable('venue_permissions', {
     .references(() => users.id, { onDelete: 'cascade' }),
   role: text('role', { enum: ['owner', 'editor', 'viewer', 'commenter'] }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('venue_permissions_venue_user_idx').on(table.venueId, table.userId),
+])

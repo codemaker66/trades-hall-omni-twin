@@ -1,0 +1,22 @@
+const fs = require('fs');
+const p = 'c:/Users/blake/Documents/GitHub/trades-hall-omni-twin/packages/physics-solvers/src/nsga2.ts';
+const SQ = String.fromCharCode(39);
+const BT = String.fromCharCode(96);
+
+const c = [];
+c.push('/**');
+c.push(' * PS-8: NSGA-II Multi-Objective Optimization');
+c.push(' *');
+c.push(' * Implements the Non-dominated Sorting Genetic Algorithm II (Deb et al. 2002)');
+c.push(' * with SBX crossover, uniform crossover, polynomial mutation, crowding');
+c.push(' * distance assignment, and deterministic tournament selection.');
+c.push(' *');
+c.push(' * Reference: Deb, Pratap, Agarwal & Meyarivan,');
+c.push(' *   "A Fast and Elitist Multiobjective Genetic Algorithm: NSGA-II",');
+c.push(' *   IEEE Transactions on Evolutionary Computation, 6(2), 2002.');
+c.push(' */');
+c.push('');
+c.push('import type { NSGA2Config, ParetoSolution, ObjectiveFunction, PRNG } from ' + SQ + './types.js' + SQ);
+c.push('import { CrossoverType, createPRNG } from ' + SQ + './types.js' + SQ);
+fs.writeFileSync(p, c.join('\n') + '\n');
+console.log('Part 1 done');

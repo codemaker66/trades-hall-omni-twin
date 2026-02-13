@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState, useEffect } from 'react'
+import { use, useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Card } from '../../../components/ui/Card'
 import { Badge } from '../../../components/ui/Badge'
@@ -12,6 +12,34 @@ import { ErrorAlert } from '../../../components/ui/ErrorAlert'
 import { useVenue } from '../../../hooks/useVenues'
 import { apiFetch } from '../../../../lib/api-client'
 import { toast } from '../../../components/ui/Toast'
+
+interface FloorPlan {
+  id: string
+  name: string
+  widthFt: number
+  heightFt: number
+  isTemplate: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+function useFloorPlans(venueId: string) {
+  const [plans, setPlans] = useState<FloorPlan[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const fetchPlans = useCallback(async () => {
+    setLoading(true)
+    const res = await apiFetch<{ floorPlans: FloorPlan[] }>(`/venues/${venueId}/floor-plans`)
+    if (res.ok && res.data) {
+      setPlans(res.data.floorPlans)
+    }
+    setLoading(false)
+  }, [venueId])
+
+  useEffect(() => { fetchPlans() }, [fetchPlans])
+
+  return { plans, loading, refetch: fetchPlans }
+}
 
 const venueTypes = [
   { value: 'ballroom', label: 'Ballroom' },
@@ -45,6 +73,7 @@ const statusBadge: Record<string, 'success' | 'gold' | 'default'> = {
 export default function VenueDetailPage({ params }: { params: Promise<{ venueId: string }> }) {
   const { venueId } = use(params)
   const { venue, loading, error, refetch } = useVenue(venueId)
+  const { plans: floorPlans, loading: plansLoading, refetch: refetchPlans } = useFloorPlans(venueId)
 
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
@@ -147,8 +176,8 @@ export default function VenueDetailPage({ params }: { params: Promise<{ venueId:
           <Badge variant={statusBadge[status]}>{status}</Badge>
         </div>
         <div className="flex items-center gap-2">
-          <Link href={`/editor`}>
-            <Button variant="ghost" size="sm">Open in Editor</Button>
+          <Link href={`/floor-plan?venueId=${venueId}`}>
+            <Button variant="ghost" size="sm">Open Floor Plan Editor</Button>
           </Link>
           <Button variant="primary" size="sm" onClick={handleSave} loading={saving}>
             Save Changes
@@ -235,6 +264,32 @@ export default function VenueDetailPage({ params }: { params: Promise<{ venueId:
             onChange={(e) => setBasePrice(e.target.value)}
           />
         </div>
+      </Card>
+
+      {/* Floor Plans */}
+      <Card header="Floor Plans">
+        {plansLoading ? (
+          <div className="space-y-2">
+            <Skeleton height="h-10" />
+            <Skeleton height="h-10" />
+          </div>
+        ) : floorPlans.length === 0 ? (
+          <p className="text-xs text-surface-60">No floor plans yet. Open the editor to create one.</p>
+        ) : (
+          <div className="space-y-2">
+            {floorPlans.map((plan) => (
+              <div key={plan.id} className="flex items-center justify-between bg-surface-5 border border-white/10 rounded-lg px-4 py-3">
+                <div>
+                  <p className="text-sm text-surface-90 font-medium">{plan.name}</p>
+                  <p className="text-xs text-surface-60">{plan.widthFt}ft × {plan.heightFt}ft</p>
+                </div>
+                <Link href={`/floor-plan?venueId=${venueId}&planId=${plan.id}`}>
+                  <Button size="sm" variant="primary">Edit</Button>
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* Amenities */}

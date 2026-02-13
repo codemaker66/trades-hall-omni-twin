@@ -2,8 +2,9 @@ import { randomBytes } from 'node:crypto'
 import { db, sessions, users } from '@omni-twin/db'
 import { eq, and, gt } from 'drizzle-orm'
 import type { AuthUser } from '@omni-twin/types'
+import { env } from '../lib/env'
 
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
+const SESSION_TTL_MS = env.SESSION_TTL_DAYS * 86_400_000 // default 7 days
 
 function generateSessionId(): string {
   return randomBytes(32).toString('hex')
