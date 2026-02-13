@@ -1,5 +1,17 @@
 # TECHNIQUE_05_PHYSICS_INSPIRED_SOLVERS.md — Physics-Inspired Optimization
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/physics-solvers/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+PS-N maps to PS-N.
+Integration checkpoints use IDs `PS-INT-1`, `PS-INT-2`, and `PS-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
