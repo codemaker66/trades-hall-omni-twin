@@ -1,5 +1,17 @@
 # TECHNIQUE_09_OPTIMAL_CONTROL.md — Optimal Control for Venue Operations
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/optimal-control/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+OC-N maps to OC-N.
+Integration checkpoints use IDs `OC-INT-1`, `OC-INT-2`, and `OC-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
