@@ -1,5 +1,17 @@
 # TECHNIQUE_07_STATISTICAL_LEARNING_THEORY.md — Statistical Learning Theory
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/stat-learning/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+SLT-N maps to SLT-N.
+Integration checkpoints use IDs `SLT-INT-1`, `SLT-INT-2`, and `SLT-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
