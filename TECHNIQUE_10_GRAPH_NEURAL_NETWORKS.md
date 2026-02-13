@@ -1,5 +1,17 @@
 # TECHNIQUE_10_GRAPH_NEURAL_NETWORKS.md — Graph Neural Networks for Venue Intelligence
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/gnn/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+GNN-N maps to GNN-N.
+Integration checkpoints use IDs `GNN-INT-1`, `GNN-INT-2`, and `GNN-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
