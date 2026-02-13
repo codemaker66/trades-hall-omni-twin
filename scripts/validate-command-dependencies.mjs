@@ -4,6 +4,7 @@ import { join, relative } from 'node:path';
 const ROOT = process.cwd();
 const COMMAND_ROOT = join(ROOT, 'docs', 'commands');
 const ID_RE = /^(SP|PS|HPC|SLT|SIG|OC|GNN|CV)-([0-9]+|INT-[0-9]+)$/;
+const COMMAND_FILE_RE = /^(SP|PS|HPC|SLT|SIG|OC|GNN|CV)-(?:[0-9]+|INT-[0-9]+)\.md$/;
 
 function walk(dir) {
   const out = [];
@@ -13,7 +14,7 @@ function walk(dir) {
     if (st.isDirectory()) {
       if (entry === '_templates') continue;
       out.push(...walk(full));
-    } else if (st.isFile() && entry.endsWith('.md') && entry !== 'index.md') {
+    } else if (st.isFile() && COMMAND_FILE_RE.test(entry)) {
       out.push(full);
     }
   }
@@ -42,7 +43,10 @@ function parseFrontMatter(content, file) {
 
     const key = line.slice(0, idx).trim();
     const value = line.slice(idx + 1).trim();
-    if (value === '') {
+    if (value === '[]') {
+      data[key] = [];
+      currentArrayKey = null;
+    } else if (value === '') {
       data[key] = [];
       currentArrayKey = key;
     } else {

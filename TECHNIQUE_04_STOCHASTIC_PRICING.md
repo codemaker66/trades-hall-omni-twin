@@ -1,5 +1,17 @@
 # TECHNIQUE_04_STOCHASTIC_PRICING.md — Quantitative Finance Pricing Engine
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/stochastic-pricing/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+SP-N maps to SP-N.
+Integration checkpoints use IDs `SP-INT-1`, `SP-INT-2`, and `SP-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
