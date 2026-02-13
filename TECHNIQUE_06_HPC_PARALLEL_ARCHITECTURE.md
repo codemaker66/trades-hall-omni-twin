@@ -1,5 +1,17 @@
 # TECHNIQUE_06_HPC_PARALLEL_ARCHITECTURE.md — High-Performance Computing & Parallel Architecture
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/hpc/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+HPC-N maps to HPC-N.
+Integration checkpoints use IDs `HPC-INT-1`, `HPC-INT-2`, and `HPC-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
