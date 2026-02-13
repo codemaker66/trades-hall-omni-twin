@@ -1,5 +1,17 @@
 # TECHNIQUE_08_SIGNAL_PROCESSING.md — Signal Processing for Venue Intelligence
 
+<!-- COMMAND_TRACK_LINKS_START -->
+## Canonical Command Track
+Canonical command track: `docs/commands/signal-processing/`
+Execution authority for agent command specs is `docs/commands/**`.
+This document remains a research/reference source.
+
+## ID Mapping Notes
+SP-N maps to SIG-N in canonical command IDs.
+Integration checkpoints use IDs `SIG-INT-1`, `SIG-INT-2`, and `SIG-INT-3`.
+<!-- COMMAND_TRACK_LINKS_END -->
+
+
 > ## CRITICAL: NEVER OMIT, SIMPLIFY, OR WEAKEN
 >
 > Claude Code must NEVER:
